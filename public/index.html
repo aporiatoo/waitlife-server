@@ -13411,7 +13411,69 @@ function pAdmMaint(){
   h+=row({ic:"🔒",t:"بستن همهٔ نشست‌های مدیر",s:"اگر نگران نفوذ هستی",on:"admMaint('clearSessions')"});
   h+=row({ic:"🧹",t:"پاک کردن محدودیت نرخ",s:"رفع بلاک اشتباهی کاربران",on:"admMaint('clearRate')"});
   h+=row({ic:"🗑️",t:"پاک کردن سفارش‌های ردشده",s:"آزادسازی فضای دیتابیس",on:"admMaint('purgeRejected')"});
+  h+=sec("🌋 منطقهٔ ممنوعه");
+  h+=row({ic:"🌋",t:"ریست کامل جهان",s:"پاک کردن سرور — همهٔ بازیکن‌ها",on:"pAdmWorldReset()"});
   page("نگهداری",h);
+}
+/* ---------------- ریست کامل جهان ---------------- */
+function pAdmWorldReset(){
+  let h=`<div class="info" style="background:linear-gradient(135deg,#3a1212,#5c1a1a)">
+    <h4 style="color:#ffb3b3">🌋 ریست کامل جهان</h4>
+    <p style="color:#f0d5d5">این کار <b>روی سرور</b> اجرا می‌شود و برای
+    <b>همهٔ بازیکن‌ها</b> است — نه فقط این گوشی.<br>
+    قبل از ریست، خودکار یک پشتیبان به تلگرامت فرستاده می‌شود.</p></div>`;
+  h+=`<div class="info">
+    <div class="kv"><span>🧹 حالت نرم</span><b>زندگی‌ها و رتبه‌بندی پاک؛ بخت و خریدها می‌ماند</b></div>
+    <div class="kv"><span>💀 حالت سخت</span><b>حذف کامل همهٔ کاربران — صفر مطلق</b></div>
+   </div>`;
+  h+=`<div class="info">
+    <p style="font-size:13px">برای تأیید، عبارت <b>«ریست کامل»</b> را دقیقاً تایپ کن:</p>
+    <input id="wrConfirm" type="text" placeholder="ریست کامل" autocomplete="off"
+      style="width:100%;font-size:15px;padding:10px;border:2px solid #c33;border-radius:9px;text-align:center">
+   </div>`;
+  h+=row({ic:"🧹",t:"اجرای ریست نرم",s:"بخت و خریدهای بازیکن‌ها حفظ می‌شود",on:"admWorldReset('soft')"});
+  h+=row({ic:"💀",t:"اجرای ریست سخت",s:"حتی بخت و خریدها — همه‌چیز پاک",on:"admWorldReset('hard')"});
+  h+=`<div class="note">پیشنهاد: اگر بازیکنی خرید واقعی کرده، ریست نرم را بزن.
+    فایل پشتیبان را هم تا چند روز نگه دار.</div>`;
+  page("ریست جهان",h);
+}
+function admWorldReset(mode){
+  const el=document.getElementById('wrConfirm');
+  const txt=el?el.value.trim():'';
+  if(txt!=='ریست کامل'){toast("⚠️ عبارت «ریست کامل» را دقیق تایپ کن.",'w');return;}
+  const hard=mode==='hard';
+  ask(hard?"ریست سخت؟ 💀":"ریست نرم؟ 🧹",
+    hard?"همهٔ کاربران، بخت‌ها و خریدها برای همیشه حذف می‌شوند. فقط پشتیبان می‌ماند."
+        :"زندگی‌ها، رتبه‌بندی و جهان مشترک پاک می‌شود؛ بخت و خریدها می‌ماند.",
+    [{t:hard?"بله، همه‌چیز را نابود کن":"بله، ریست کن",c:"red",f:()=>{
+      toast("⏳ پشتیبان‌گیری و ریست… (تا یک دقیقه)",'m');
+      NET.admWorldReset({mode:mode,confirm:txt}).then(r=>{
+        if(!r){toast("❌ ارتباط برقرار نشد.",'b');return;}
+        if(r.err==='need_confirm'){toast("⚠️ عبارت تأیید نرسید — دوباره.",'w');return;}
+        if(r.err==='backup_failed'){
+          ask("پشتیبان‌گیری شکست خورد ⚠️",
+            "بدون پشتیبان هیچ راه برگشتی نیست. باز هم ادامه بدهم؟",
+            [{t:"آره، بدون پشتیبان ریست کن",c:"red",f:()=>{
+              NET.admWorldReset({mode:mode,confirm:txt,force:true}).then(r2=>{
+                if(r2&&r2.ok)admWorldResetDone(r2);
+                else toast("❌ ریست نشد.",'b');});}},
+             {t:"نه، بی‌خیال",c:"gray",f:()=>{}}]);
+          return;}
+        if(!r.ok){toast("❌ ریست نشد: "+(r.detail||r.err||''),'b');return;}
+        admWorldResetDone(r);
+      });}},
+     {t:"انصراف",c:"gray",f:()=>{}}]);
+}
+function admWorldResetDone(r){
+  const w=r.wiped||{};
+  modal(`<p style="text-align:right;line-height:2">
+    🌋 <b>جهان ریست شد.</b><br>
+    بازیکن: <b>${fa(w.users||0)}</b> • سفارش: <b>${fa(w.orders||0)}</b><br>
+    ${r.backup?"💾 پشتیبان قبل از ریست به تلگرامت فرستاده شد.":"⚠️ بدون پشتیبان انجام شد."}<br>
+    <span style="font-size:12px;color:#888">برای شروع تازهٔ خودت،
+    «پاک کردن کل داده» را هم روی این گوشی بزن.</span></p>
+   <button class="btn grn" onclick="closeM()">باشه</button>`,"🌋 انجام شد");
+  toast("🌋 ریست کامل جهان انجام شد.",'w');
 }
 function admMaint(act){
   if(!admSecured()){admNeedLogin();return;}
@@ -14899,6 +14961,7 @@ const NET={
   async admOrders(st){ return await this.admCall('/api/admin/orders',{status:st},15000); },
   async admOrder(id,action){ return await this.admCall('/api/admin/order/'+id,{action:action},15000); },
   async admBroadcast(t){ return await this.admCall('/api/admin/broadcast',{text:t},25000); },
+  async admWorldReset(o){ return await this.admCall('/api/admin/worldreset',o||{},60000); },
   /* فاکتور استارز */
   async starsLink(pack){
     if(!this.on)return null;
@@ -15128,5 +15191,5 @@ function menuHelp(){
   },165);
 })();
 </script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a2cbe6f59f0ed34e',t:'MTc4NzAwMzUwOA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
