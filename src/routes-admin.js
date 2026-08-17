@@ -465,6 +465,96 @@ app.post('/api/admin/restore', auth, adminSecure, async (req, res) => {
   res.json({ ok: true, added, updated, skipped, failed, total: rows.length });
 });
 
+/* ================================================================
+   ریست کامل جهان — خطرناک‌ترین دکمهٔ پنل
+   قبل از هر چیز پشتیبان می‌گیرد و به تلگرام مدیرها می‌فرستد.
+   دو حالت:
+     soft (پیش‌فرض): زندگی‌ها، رتبه‌بندی، حراج، ارواح و رویدادها پاک
+       می‌شوند ولی «بخت»، خریدها و رابطهٔ دعوت بازیکن‌ها می‌ماند.
+     hard: همهٔ کاربران هم کامل حذف می‌شوند — صفر مطلق.
+   محافظ‌ها: تأیید متنی الزامی + پشتیبان اجباری + ثبت در دفتر رویداد.
+================================================================= */
+app.post('/api/admin/worldreset', auth, adminSecure, rateLimit(10, 60 * 60 * 1000),
+  async (req, res) => {
+  const b = req.body || {};
+  const actor = String(req.user.id).replace(/^dev:/, '');
+  const ip = clientIP(req);
+  const hard = b.mode === 'hard';
+
+  /* محافظ ۱: عبارت تأیید باید دقیق تایپ شده باشد */
+  if (String(b.confirm || '') !== 'ریست کامل')
+    return res.status(400).json({ ok: false, err: 'need_confirm' });
+
+  /* محافظ ۲: اول پشتیبان — اگر نشد، ریست هم نمی‌شود (مگر force) */
+  let bak = { ok: false, err: 'skipped' };
+  try { bak = await backup.runBackup(true); } catch (e) { bak = { ok: false, err: e.message }; }
+  if (!bak.ok && !b.force)
+    return res.status(409).json({ ok: false, err: 'backup_failed',
+      detail: bak.err || 'نامشخص' });
+
+  let wiped = { users: 0, orders: 0, ghosts: 0, wevents: 0, bids: 0 };
+  try {
+    if (db.pool) {
+      const cnt = async t => {
+        try { const r = await db.pool.query('SELECT COUNT(*) c FROM ' + t);
+          return r.rows[0].c | 0; } catch (e) { return 0; }
+      };
+      wiped.users  = await cnt('users');
+      wiped.orders = await cnt('orders');
+      wiped.ghosts = await cnt('ghosts');
+      wiped.wevents = await cnt('wevents');
+      wiped.bids   = await cnt('bids');
+      /* جهان مشترک همیشه کامل پاک می‌شود */
+      for (const t of ['ghosts', 'wevents', 'bids'])
+        { try { await db.pool.query('TRUNCATE ' + t + ' RESTART IDENTITY'); } catch (e) {} }
+      if (hard) {
+        try { await db.pool.query('TRUNCATE orders RESTART IDENTITY'); } catch (e) {}
+        try { await db.pool.query('DELETE FROM users'); } catch (e) {}
+      } else {
+        /* soft: بازیکن می‌ماند، زندگی و رتبه صفر می‌شود؛ بخت/خرید/دعوت محفوظ */
+        try { await db.pool.query(
+          `UPDATE users SET save=NULL, wallet=NULL, score=0, wealth=0, gen=1,
+             fam=NULL, char_name=NULL, country=NULL, city=NULL, fame=0,
+             fame_rep=60, p_age=0, job_t=NULL, alive=TRUE, rank_last=NULL,
+             earn_day=NULL, earn_today=0`); } catch (e) {}
+      }
+    } else {
+      wiped.users = Object.keys(db.mem.users).length;
+      wiped.orders = db.mem.orders.length;
+      wiped.ghosts = (db.mem.ghosts || []).length;
+      wiped.wevents = (db.mem.wevents || []).length;
+      wiped.bids = (db.mem.bids || []).length;
+      db.mem.ghosts = []; db.mem.wevents = []; db.mem.bids = [];
+      if (hard) { db.mem.users = {}; db.mem.orders = []; }
+      else {
+        for (const u of Object.values(db.mem.users)) {
+          u.save = null; u.wallet = null; u.score = 0; u.wealth = 0; u.gen = 1;
+          u.fam = null; u.char_name = null; u.country = null; u.city = null;
+          u.fame = 0; u.fame_rep = 60; u.p_age = 0; u.job_t = null;
+          u.alive = true; u.rank_last = null; u.earn_day = null; u.earn_today = 0;
+        }
+      }
+      db.fileSave();
+    }
+  } catch (e) {
+    return res.status(500).json({ ok: false, err: 'wipe_failed',
+      detail: String(e.message).slice(0, 140) });
+  }
+
+  await audit(null, 'admin-worldreset', wiped.users,
+    (hard ? 'hard' : 'soft') + ' backup=' + (bak.ok ? 'ok' : 'skipped'), actor, ip);
+  try {
+    await notifyAdmins('🌋 <b>ریست کامل جهان انجام شد</b>\n' +
+      'حالت: <b>' + (hard ? 'حذف کامل کاربران' : 'حفظ بخت و خریدها') + '</b>\n' +
+      'بازیکن: ' + faNum(wiped.users) + ' • سفارش: ' + faNum(wiped.orders) +
+      ' • ارواح: ' + faNum(wiped.ghosts) + '\n' +
+      (bak.ok ? '💾 پشتیبان قبل از ریست در همین چت فرستاده شد.'
+              : '⚠️ بدون پشتیبان (اجباری رد شد).') +
+      '\nمدیر: <code>' + actor + '</code>');
+  } catch (e) {}
+  res.json({ ok: true, mode: hard ? 'hard' : 'soft', wiped, backup: !!bak.ok });
+});
+
 app.post('/api/admin/maintenance', auth, adminSecure, async (req, res) => {
   const act = String((req.body && req.body.act) || '');
   const actor = String(req.user.id).replace(/^dev:/, '');
