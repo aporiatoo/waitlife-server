@@ -790,36 +790,23 @@ function isAdminId(id) {
 /* ================================================================
    امنیت پنل مدیریت
    لایه ۱: شناسهٔ تلگرام باید در ADMIN_IDS باشد
-   لایه ۲: رمز دوم (PIN) که فقط در متغیرهای محیطی است
-   لایه ۳: نشست کوتاه‌مدت با توکن تصادفی
-   لایه ۴: قفل شدن بعد از تلاش‌های ناموفق
-   لایه ۵: ثبت هر اقدام در دفتر رویداد
+     (هویت را خود تلگرام با امضای HMAC تأیید می‌کند — جعل‌ناپذیر)
+   لایه ۲: ثبت هر اقدام در دفتر رویداد
+   نکته: رمز دوم (PIN) حذف شد — چون هویت تلگرام از قبل تأیید شده،
+   رمز دوم فقط اصطکاک اضافه بود.
 ================================================================= */
-const ADMIN_PIN = String(process.env.ADMIN_PIN || '');
-const SESSION_MS = 30 * 60 * 1000;          /* نشست ۳۰ دقیقه */
-const MAX_PIN_TRIES = 5;
-const LOCK_MS = 15 * 60 * 1000;
-const adminSessions = new Map();            /* token -> {id, exp, ip} */
-const pinFails = new Map();                 /* id -> {n, until} */
+const SESSION_MS = 30 * 60 * 1000;
+const adminSessions = new Map();            /* token -> {id, exp, ip} — فقط برای آمار */
 
 setInterval(() => {
   const now = Date.now();
   for (const [t, v] of adminSessions) if (now > v.exp) adminSessions.delete(t);
-  for (const [k, v] of pinFails) if (now > v.until && v.n === 0) pinFails.delete(k);
 }, 5 * 60 * 1000);
 
 function newSession(id, ip) {
   const token = crypto.randomBytes(24).toString('base64url');
   adminSessions.set(token, { id: String(id), exp: Date.now() + SESSION_MS, ip });
   return token;
-}
-function checkSession(token, id) {
-  const s = adminSessions.get(String(token || ''));
-  if (!s) return false;
-  if (Date.now() > s.exp) { adminSessions.delete(token); return false; }
-  if (String(s.id) !== String(id)) return false;
-  s.exp = Date.now() + SESSION_MS;          /* تمدید با هر استفاده */
-  return true;
 }
 
 /* دروازهٔ پایه: فقط شناسهٔ مدیر */
@@ -832,54 +819,16 @@ function adminOnly(req, res, next) {
   }
   next();
 }
-/* دروازهٔ سخت: برای کارهای حساس، نشست معتبر هم لازم است */
-function adminSecure(req, res, next) {
-  const raw = String(req.user.id).replace(/^dev:/, '');
-  if (!ADMIN_IDS.length && DEV_MODE) return next();
-  if (!ADMIN_IDS.includes(raw)) {
-    audit(raw, 'admin-denied', 0, req.path, raw, clientIP(req));
-    return res.status(403).json({ ok: false, err: 'forbidden' });
-  }
-  /* اگر PIN تنظیم نشده، هشدار می‌دهیم ولی جلو را نمی‌گیریم */
-  if (!ADMIN_PIN) return next();
-  const tok = req.get('X-Admin-Session') || (req.body && req.body.session) || '';
-  if (!checkSession(tok, raw)) {
-    return res.status(401).json({ ok: false, err: 'need_pin' });
-  }
-  next();
-}
+/* دروازهٔ کارهای حساس: همان دروازهٔ پایه — هویت تلگرام کافی است */
+const adminSecure = adminOnly;
 
-/* ورود با رمز دوم */
+/* ورود — بدون رمز دوم؛ فقط برای سازگاری با کلاینت‌های قدیمی */
 app.post('/api/admin/login', auth, adminOnly, rateLimit(10, 10 * 60 * 1000), async (req, res) => {
   const raw = String(req.user.id).replace(/^dev:/, '');
   const ip = clientIP(req);
-  const f = pinFails.get(raw);
-  if (f && f.until > Date.now()) {
-    return res.status(429).json({ ok: false, err: 'locked',
-      wait: Math.ceil((f.until - Date.now()) / 1000) });
-  }
-  if (!ADMIN_PIN) {
-    return res.json({ ok: true, session: newSession(raw, ip), noPin: true });
-  }
-  const pin = String((req.body && req.body.pin) || '');
-  const a = Buffer.from(crypto.createHash('sha256').update(pin).digest('hex'));
-  const b2 = Buffer.from(crypto.createHash('sha256').update(ADMIN_PIN).digest('hex'));
-  const okPin = a.length === b2.length && crypto.timingSafeEqual(a, b2);
-  if (!okPin) {
-    const n = ((f && f.n) | 0) + 1;
-    pinFails.set(raw, { n, until: n >= MAX_PIN_TRIES ? Date.now() + LOCK_MS : 0 });
-    await audit(raw, 'admin-pin-fail', n, 'رمز اشتباه', raw, ip);
-    if (n >= MAX_PIN_TRIES) {
-      await notifyAdmins(`🚨 <b>هشدار امنیتی</b>\n\n${faNum(MAX_PIN_TRIES)} تلاش ناموفق ورود به پنل مدیر.\nحساب ${faNum(15)} دقیقه قفل شد.\nآی‌پی: <code>${ip}</code>`);
-      return res.status(429).json({ ok: false, err: 'locked', wait: LOCK_MS / 1000 });
-    }
-    return res.status(401).json({ ok: false, err: 'bad_pin', left: MAX_PIN_TRIES - n });
-  }
-  pinFails.delete(raw);
   const token = newSession(raw, ip);
-  await audit(raw, 'admin-login', 0, 'ورود موفق', raw, ip);
-  await notifyAdmins(`🔐 ورود به پنل مدیر\nآی‌پی: <code>${ip}</code>\nزمان: ${new Date().toLocaleString('fa-IR')}`);
-  res.json({ ok: true, session: token, expires: SESSION_MS });
+  await audit(raw, 'admin-login', 0, 'ورود به پنل', raw, ip);
+  res.json({ ok: true, session: token, noPin: true, expires: SESSION_MS });
 });
 app.post('/api/admin/logout', auth, adminOnly, (req, res) => {
   const tok = req.get('X-Admin-Session') || (req.body && req.body.session) || '';
@@ -2167,10 +2116,100 @@ app.post('/api/admin/deep', auth, adminOnly, async (req, res) => {
   out.uptime = Math.round(process.uptime());
   out.memMB = Math.round(process.memoryUsage().rss / 1048576);
   out.node = process.version;
-  out.pinSet = !!ADMIN_PIN;
+  out.pinSet = false;   /* رمز دوم حذف شده — هویت تلگرام کافی است */
   out.botOk = !!BOT_TOKEN;
   out.admins = ADMIN_IDS.length;
   res.json({ ok: true, deep: out });
+});
+
+/* ================================================================
+   قیف بازیکن — کجا بازیکن‌ها را از دست می‌دهیم؟
+   هر پله نسبت به پلهٔ قبل سنجیده می‌شود تا نقطهٔ ریزش پیدا شود:
+   ورود → ساخت شخصیت → رسیدن به ۱۸ سالگی → برگشت روز بعد →
+   ماندن تا هفتهٔ بعد → باز کردن چت بات → دعوت موفق → خرید
+   به‌علاوه: نگهداشت روزانهٔ ۱۴ روز اخیر (چند درصد تازه‌واردها برگشتند)
+================================================================= */
+app.post('/api/admin/funnel', auth, adminOnly, async (req, res) => {
+  const out = { at: Date.now() };
+  if (pool) {
+    /* پله‌های قیف — همه در یک کوئری تا سرور رایگان اذیت نشود */
+    const f = await pool.query(`
+      SELECT COUNT(*) total,
+        COUNT(*) FILTER (WHERE save IS NOT NULL OR char_name IS NOT NULL) created_char,
+        COUNT(*) FILTER (WHERE p_age >= 18 OR gen > 1) adult,
+        COUNT(*) FILTER (WHERE created IS NOT NULL
+                         AND seen > created + INTERVAL '20 hours') day2,
+        COUNT(*) FILTER (WHERE created IS NOT NULL
+                         AND seen > created + INTERVAL '6 days') day7,
+        COUNT(*) FILTER (WHERE chat_ok = TRUE) chat,
+        COUNT(*) FILTER (WHERE refs > 0) invited,
+        COUNT(*) FILTER (WHERE spent > 0) paid_stars
+      FROM users WHERE banned = FALSE`);
+    const r0 = f.rows[0];
+    /* خریدهای کارتی تأییدشده هم «خرید» حساب می‌شوند */
+    let paidCard = 0;
+    try {
+      const pc = await pool.query(
+        `SELECT COUNT(DISTINCT uid) c FROM orders WHERE status='approved'`);
+      paidCard = +pc.rows[0].c;
+    } catch (e) {}
+    out.steps = [
+      { k: 'enter',  n: 'ورود به بازی',        c: +r0.total },
+      { k: 'char',   n: 'ساخت شخصیت',          c: +r0.created_char },
+      { k: 'adult',  n: 'رسیدن به ۱۸ سالگی',    c: +r0.adult },
+      { k: 'day2',   n: 'برگشت روز بعد',        c: +r0.day2 },
+      { k: 'day7',   n: 'ماندن تا هفتهٔ بعد',    c: +r0.day7 },
+      { k: 'chat',   n: 'باز کردن چت بات',      c: +r0.chat },
+      { k: 'invite', n: 'دعوت موفق دوست',       c: +r0.invited },
+      { k: 'pay',    n: 'خرید (استارز یا کارت)', c: Math.max(+r0.paid_stars, paidCard) }
+    ];
+    /* نگهداشت روزانه: از تازه‌واردهای هر روز، چند نفر روز بعد برگشتند */
+    try {
+      const d = await pool.query(`
+        SELECT to_char(created,'YYYY-MM-DD') d,
+               COUNT(*) new_users,
+               COUNT(*) FILTER (WHERE seen > created + INTERVAL '20 hours') ret1
+        FROM users
+        WHERE banned = FALSE AND created > NOW() - INTERVAL '14 days'
+          AND created < NOW() - INTERVAL '1 day'
+        GROUP BY 1 ORDER BY 1 DESC`);
+      out.cohorts = d.rows.map(r => ({
+        d: r.d, new1: +r.new_users, ret1: +r.ret1,
+        pct: +r.new_users ? Math.round(+r.ret1 / +r.new_users * 100) : 0
+      }));
+    } catch (e) { out.cohorts = []; }
+    /* آخرین باری که هر گروه دیده شده — برای حس کردن نبض بازی */
+    try {
+      const g = await pool.query(`
+        SELECT COUNT(*) FILTER (WHERE seen > NOW() - INTERVAL '1 hour')  h1,
+               COUNT(*) FILTER (WHERE seen > NOW() - INTERVAL '6 hours') h6,
+               COUNT(*) FILTER (WHERE seen > NOW() - INTERVAL '24 hours') h24
+        FROM users WHERE banned = FALSE`);
+      out.pulse = { h1: +g.rows[0].h1, h6: +g.rows[0].h6, h24: +g.rows[0].h24 };
+    } catch (e) {}
+  } else {
+    /* حالت فایل — برای تست محلی */
+    const arr = Object.values(mem.users).filter(u => !u.banned);
+    const now = Date.now();
+    const step = (n, k, fn) => ({ k, n, c: arr.filter(fn).length });
+    out.steps = [
+      { k: 'enter', n: 'ورود به بازی', c: arr.length },
+      step('ساخت شخصیت', 'char', u => u.save || u.char_name),
+      step('رسیدن به ۱۸ سالگی', 'adult', u => (u.p_age | 0) >= 18 || (u.gen | 0) > 1),
+      step('برگشت روز بعد', 'day2', u => u.created && u.seen && (u.seen - u.created) > 20 * 3600e3),
+      step('ماندن تا هفتهٔ بعد', 'day7', u => u.created && u.seen && (u.seen - u.created) > 6 * 86400e3),
+      step('باز کردن چت بات', 'chat', u => u.chat_ok),
+      step('دعوت موفق دوست', 'invite', u => (u.refs | 0) > 0),
+      step('خرید (استارز یا کارت)', 'pay', u => (u.spent | 0) > 0)
+    ];
+    out.cohorts = [];
+    out.pulse = {
+      h1:  arr.filter(u => now - (u.seen || 0) < 3600e3).length,
+      h6:  arr.filter(u => now - (u.seen || 0) < 6 * 3600e3).length,
+      h24: arr.filter(u => now - (u.seen || 0) < 86400e3).length
+    };
+  }
+  res.json({ ok: true, funnel: out });
 });
 
 /* جست‌وجوی کاربر */
@@ -2309,7 +2348,7 @@ app.post('/api/admin/health', auth, adminOnly, async (req, res) => {
   add('توکن بات', !!BOT_TOKEN, BOT_TOKEN ? 'تنظیم شده' : 'تنظیم نشده');
   add('نام کاربری بات', !!BOT_USER_LIVE, BOT_USER_LIVE ? '@' + BOT_USER_LIVE : 'ناشناخته');
   add('آدرس سرور', !!SELF_URL, SELF_URL || 'تنظیم نشده — وب‌هوک کار نمی‌کند');
-  add('رمز دوم مدیر', !!ADMIN_PIN, ADMIN_PIN ? 'فعال' : '⚠️ تنظیم نشده — امنیت پایین');
+  add('احراز هویت مدیر', true, 'با امضای تلگرام (رمز دوم حذف شده)');
   add('فهرست مدیران', ADMIN_IDS.length > 0, ADMIN_IDS.length + ' نفر');
   add('حالت توسعه', !DEV_MODE, DEV_MODE ? '⚠️ روشن است! در تولید خاموش کن' : 'خاموش (درست)');
   add('فایل بازی', !!findGame(), findGame() ? 'پیدا شد' : 'پیدا نشد');

@@ -12265,8 +12265,13 @@ function adminUnlock(){
   try{hideMenu();}catch(e){}          /* پنل نباید زیر منوی اصلی بماند */
   closeM();
   toast("🔓 حالت مدیر فعال شد.",'m');
-  /* اگر آنلاین است، اول ورود امن؛ وگرنه پنل محلی */
-  if(NET.on&&!ADMSESS)pAdminLogin();
+  /* ورود خودکار — هویت را خود تلگرام تأیید کرده، رمز دوم لازم نیست */
+  if(NET.on&&!ADMSESS){
+    NET.admLogin('').then(r=>{
+      if(r&&r.ok&&r.session){ADMSESS=r.session;NET.admSession=r.session;}
+      pAdmin();
+    });
+  }
   else pAdmin();
 }
 
@@ -12781,7 +12786,9 @@ function supportLink(){
    ورود: ۷ بار روی لوگو، یا ?admin=1
 ================================================================= */
 
-/* ---------------- ورود امن به پنل ---------------- */
+/* ---------------- ورود به پنل — بدون رمز دوم ----------------
+   هویت را خود تلگرام با امضای HMAC تأیید می‌کند؛ اگر شناسه در
+   ADMIN_IDS باشد، همین کافی است. */
 function pAdminLogin(){
   if(!NET.on){
     page("ورود مدیر",`<div class="note">پنل آنلاین به سرور نیاز دارد.
@@ -12789,44 +12796,23 @@ function pAdminLogin(){
       row({ic:"🛠️",t:"پنل آفلاین",s:"فقط ابزارهای این دستگاه",on:"pAdmin(1)"}));
     return;
   }
-  let h=`<div class="info" style="background:linear-gradient(135deg,#2b3a4a,#41627f);color:#fff">
-    <h4 style="color:#fff">🔐 ورود امن</h4>
-    <p style="color:#dfe8f0">برای کارهای حساس (شارژ بخت، مسدودسازی، تغییر اقتصاد)
-    باید رمز دوم را وارد کنی.</p></div>`;
-  h+=`<div class="info">
-    <input id="admPin" type="password" inputmode="numeric" placeholder="رمز دوم"
-      style="width:100%;padding:12px;font-size:17px;text-align:center;letter-spacing:6px;
-      border:2px solid #d7dde5;border-radius:9px;font-family:monospace">
-   </div>`;
-  h+=row({ic:"🔓",t:"ورود",s:"نشست ۳۰ دقیقه‌ای باز می‌شود",on:"admDoLogin()"});
-  h+=row({ic:"👁️",t:"ورود فقط‌خواندنی",s:"آمار را ببین، تغییری نده",on:"pAdmin()"});
-  h+=`<div class="note">اگر رمز را تنظیم نکرده‌ای، متغیر <bdi>ADMIN_PIN</bdi>
-    را در Render اضافه کن. بدون آن امنیت پنل پایین است.</div>`;
-  page("ورود مدیر",h);
+  admDoLogin();
 }
 function admDoLogin(){
-  const el=document.getElementById('admPin');
-  const pin=el?el.value:'';
-  toast("⏳ در حال بررسی…",'m');
-  NET.admLogin(pin).then(r=>{
+  NET.admLogin('').then(r=>{
     if(!r){toast("❌ ارتباط با سرور برقرار نشد.",'b');return;}
     if(r.ok&&r.session){
       ADMSESS=r.session; NET.admSession=r.session;
-      toast(r.noPin?"🔓 وارد شدی (رمز تنظیم نشده).":"🔓 ورود موفق — نشست باز شد.",'m');
       popAll(); pAdmin();
       return;
     }
-    if(r.err==='locked'){toast(`⛔ قفل شد. ${fa(Math.ceil((r.wait||900)/60))} دقیقه صبر کن.`,'b');return;}
-    if(r.err==='bad_pin'){toast(`❌ رمز اشتباه. ${fa(r.left||0)} تلاش مانده.`,'b');return;}
     toast("❌ ورود نشد.",'b');
   });
 }
 function admSecured(){return !!ADMSESS;}
 function admNeedLogin(){
-  ask("🔐 نیاز به ورود امن",
-    "این کار حساس است و به رمز دوم نیاز دارد.",
-    [{t:"ورود",c:"grn",f:()=>{popAll();pAdminLogin();}},
-     {t:"انصراف",c:"gray",f:()=>{}}]);
+  /* دیگر رمز دوم نداریم — فقط نشست را می‌سازیم و ادامه می‌دهیم */
+  admDoLogin();
 }
 
 /* ---------------- صفحهٔ اصلی پنل ---------------- */
@@ -12845,14 +12831,14 @@ function pAdmin(offline){
     شناسه: <bdi style="font-family:monospace">${w.uid||"—"}</bdi></p></div>`;
 
   if(online&&!admSecured()){
-    h+=`<div class="note" style="background:#fff4d6;border-right:3px solid #f59f00">
-      🔐 برای کارهای حساس باید وارد شوی.</div>`;
-    h+=row({ic:"🔓",t:"ورود امن",s:"باز کردن نشست مدیر",on:"pAdminLogin()"});
+    /* نشست خودکار — بی‌سروصدا باز می‌شود، رمز دوم حذف شده */
+    admDoLogin();
   }
 
   if(online){
     h+=sec("📊 داشبورد زنده");
     h+=row({ic:"📈",t:"آمار کامل سامانه",s:"کاربر، درآمد، نگهداشت، دعوت",on:"pAdmDash()"});
+    h+=row({ic:"🪜",t:"قیف بازیکن",s:"کجا بازیکن‌ها را از دست می‌دهیم؟",on:"pAdmFunnel()"});
     h+=row({ic:"👥",t:"مدیریت کاربران",s:"جست‌وجو، پرونده، شارژ، مسدودسازی",on:"pAdmUsers()"});
     h+=row({ic:"🧾",t:"سفارش‌های سرور",s:"تأیید و رد آنلاین",on:"pAdmOrders()"});
     h+=row({ic:"📜",t:"دفتر رویداد",s:"هر تغییر حساس ثبت می‌شود",on:"pAdmAudit()"});
@@ -12987,11 +12973,97 @@ function pAdmDash(){
       ${kv("مصرف حافظه",fa(d.memMB)+" مگابایت")}
       ${kv("نسخهٔ Node",`<bdi>${d.node}</bdi>`)}
       ${kv("نشست‌های باز مدیر",fa(d.sessions))}
-      ${kv("رمز دوم",d.pinSet?"فعال ✅":"غیرفعال ⚠️")}
       ${kv("تعداد مدیران",fa(d.admins))}
      </div>`;
     h+=row({ic:"🔄",t:"به‌روزرسانی آمار",s:"گرفتن دوبارهٔ داده",on:"popPage();pAdmDash()"});
     popPage();page("داشبورد",h);
+  });
+}
+
+/* ---------------- قیف بازیکن ----------------
+   پاسخ به مهم‌ترین سوال: بازیکن‌ها در کدام پله می‌روند؟
+   هر پله دو عدد دارد: درصد از کل، و درصد نسبت به پلهٔ قبل.
+   پله‌ای که «نسبت به قبلی» ناگهان می‌شکند، جای کار ماست. */
+function pAdmFunnel(){
+  page("قیف بازیکن",`<div class="note">⏳ در حال گرفتن داده…</div>`);
+  NET.admFunnel().then(r=>{
+    if(!r||!r.ok){toast("❌ داده نیامد.",'b');return;}
+    const F=r.funnel,steps=F.steps||[];
+    const total=steps.length?steps[0].c:0;
+    const kv=(a,b2)=>`<div class="kv"><span>${a}</span><b>${b2}</b></div>`;
+    let h=`<div class="info" style="background:linear-gradient(135deg,#243b2e,#3d6b4f);color:#fff">
+      <h4 style="color:#fff">🪜 قیف بازیکن</h4>
+      <p style="color:#dcefe2">مسیر بازیکن از ورود تا خرید. هر پله‌ای که
+      نسبت به پلهٔ قبلش ناگهان بشکند، همان‌جا باید کار کنیم.</p></div>`;
+
+    if(F.pulse){
+      h+=sec("💓 نبض بازی");
+      h+=`<div class="info">
+        ${kv("آنلاین در یک ساعت اخیر",fa(F.pulse.h1))}
+        ${kv("در ۶ ساعت اخیر",fa(F.pulse.h6))}
+        ${kv("در ۲۴ ساعت اخیر",fa(F.pulse.h24))}
+       </div>`;
+    }
+
+    h+=sec("🪜 پله‌های قیف");
+    let prev=total;
+    steps.forEach((s2,i)=>{
+      const pctAll=total?Math.round(s2.c/total*100):0;
+      const pctPrev=i===0?100:(prev?Math.round(s2.c/prev*100):0);
+      /* رنگ بر اساس شکست نسبت به پلهٔ قبل */
+      const col=i===0?'#4caf50':pctPrev>=60?'#4caf50':pctPrev>=30?'#e0a020':'#c62828';
+      h+=`<div class="info" style="padding:10px 12px">
+        <div class="kv" style="border:none;padding:0">
+          <span>${fa(i+1)}. ${s2.n}</span>
+          <b>${fa(s2.c)} نفر</b></div>
+        <span class="mini" style="max-width:100%;margin-top:5px">
+          <i style="width:${Math.max(2,pctAll)}%;background:${col}"></i></span>
+        <p style="font-size:11.5px;color:var(--sub);margin:5px 0 0">
+          ${fa(pctAll)}٪ از کل${i>0?` • ${fa(pctPrev)}٪ از پلهٔ قبل`:''}
+          ${i>0&&pctPrev<30&&prev>=5?' — <b style="color:#c62828">اینجا می‌شکند!</b>':''}</p>
+       </div>`;
+      prev=s2.c;
+    });
+
+    /* بزرگ‌ترین شکست را جدا اعلام کن تا سوال «حالا چی کار کنم» جواب بگیرد */
+    let worst=null;
+    for(let i=1;i<steps.length;i++){
+      const base=steps[i-1].c;
+      if(base<5)continue;             /* نمونهٔ خیلی کم، قضاوت نکن */
+      const p=Math.round(steps[i].c/base*100);
+      if(!worst||p<worst.p)worst={i,p};
+    }
+    if(worst){
+      const tips={
+        char:"بازیکن وارد شده ولی شخصیت نساخته — صفحهٔ ساخت شخصیت طولانی یا گیج‌کننده است؟",
+        adult:"بازیکن‌ها قبل از ۱۸ سالگی رها می‌کنند — شاید دوران کودکی بازی کند یا خسته‌کننده است.",
+        day2:"بازیکن‌ها فردا برنمی‌گردند — دلیلی برای برگشت روزانه (پاداش، اتفاق جدید) کم است.",
+        day7:"هفتهٔ اول را دوام نمی‌آورند — محتوای میان‌مدت یا هدف بلندمدت کم است.",
+        chat:"چت بات را باز نمی‌کنند — یعنی اعلان هم نمی‌گیرند؛ باید انگیزهٔ استارت دادن به بات ساخته شود.",
+        invite:"کسی دوستش را نمی‌آورد — پاداش دعوت را پررنگ‌تر و راحت‌تر کن.",
+        pay:"خرید کم است — این آخرین پله است؛ اول پله‌های قبلی را درست کن، خرید خودش می‌آید."
+      };
+      const s2=steps[worst.i];
+      h+=sec("🎯 نتیجه‌گیری");
+      h+=`<div class="info" style="background:#fff4d6">
+        <h4>بزرگ‌ترین شکست: «${s2.n}»</h4>
+        <p>فقط <b>${fa(worst.p)}٪</b> از پلهٔ قبل به اینجا می‌رسند.<br>
+        ${tips[s2.k]||''}</p></div>`;
+    }
+
+    if((F.cohorts||[]).length){
+      h+=sec("📅 برگشت روز بعد — تازه‌واردهای ۱۴ روز اخیر");
+      h+=`<div class="note">از کسانی که هر روز آمدند، چند درصد فردایش برگشتند؟
+        بالای ۳۰٪ خوب است، زیر ۱۵٪ زنگ خطر.</div>`;
+      F.cohorts.forEach(c2=>{
+        h+=row({ic:"📆",t:`<bdi>${c2.d}</bdi>`,
+          s:`${fa(c2.new1)} تازه‌وارد • ${fa(c2.ret1)} برگشتند`,
+          r:fa(c2.pct)+"٪",bar:c2.pct,ch:false});
+      });
+    }
+
+    h+=row({ic:"🔄",t:"به‌روزرسانی",s:"گرفتن دوبارهٔ داده",on:"popPage();pAdmFunnel()"});
+    popPage();page("قیف بازیکن",h);
   });
 }
 
@@ -14816,6 +14888,7 @@ const NET={
   },
   async admLogin(pin){ return await this.admCall('/api/admin/login',{pin:pin},15000); },
   async admDeep(){ return await this.admCall('/api/admin/deep',{},20000); },
+  async admFunnel(){ return await this.admCall('/api/admin/funnel',{},20000); },
   async admUsers(q){ return await this.admCall('/api/admin/users',{q:q||''},15000); },
   async admUser(id){ return await this.admCall('/api/admin/user/detail',{id:id},15000); },
   async admAct(o){ return await this.admCall('/api/admin/user/act',o,15000); },
