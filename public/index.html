@@ -859,6 +859,8 @@ const SEASONS=[
  {n:"زمستان",e:"❄️",d:"فصل تأمل"}
 ];
 const MONTHS=["فروردین","اردیبهشت","خرداد","تیر","مرداد","شهریور","مهر","آبان","آذر","دی","بهمن","اسفند"];
+const MONTH_E=["🌸","🌷","🌿","☀️","🏖️","🌾","🍂","🍁","🌧️","❄️","🌨️","🌬️"];
+const AP_PER_MONTH=5;                 /* امتیاز اقدام هر ماه */
 
 const SKILLS=[
  {k:"lang", n:"زبان خارجی",   e:"🗣️", c:40,  d:"شانس مهاجرت و مشاغل بین‌المللی"},
@@ -1358,7 +1360,7 @@ function newLife(name,g,ci){
     econ:{k:"normal",idx:1,wage:1,pressure:1},mkt:{stock:100,crypto:100,gold:100},
     port:{stock:0,crypto:0,gold:0},biz:null,office:null,officeY:0,
     grandkids:0,books:0,awards:[],arcs:[],arcSeen:{},retired:false,pension:0,careerY:0,
-    visited:[],ms:{},season:0,ap:3,apMax:3,goals:[],goalsDone:[],energy:100,
+    visited:[],ms:{},season:0,month:0,ap:5,apMax:5,goals:[],goalsDone:[],energy:100,
     projects:[],projDone:[],focus:null,servedMil:false,tookExam:false,examRank:null,
     seasonLog:0,weekPlan:null
   };
@@ -1829,7 +1831,11 @@ function migrate(d){
   ['bank','savings','loan'].forEach(k=>{if(d[k]<0)d[k]=0;});
 
   d.season=(Number.isInteger(d.season)&&d.season>=0&&d.season<=3)?d.season:0;
-  d.apMax=num(d.apMax,3,1,6); d.ap=num(d.ap,d.apMax,0,d.apMax);
+  /* مهاجرت به تقویم ماهانه: سیوهای قدیمی فصل داشتند، ماه نه */
+  d.month=(Number.isInteger(d.month)&&d.month>=0&&d.month<=11)?d.month:(d.season*3);
+  if(d.mSeen!==undefined&&!Number.isInteger(d.mSeen))delete d.mSeen;
+  delete d.tNext;                       /* زمان‌بندی شخصی قدیمی حذف شد */
+  d.apMax=num(d.apMax,5,1,7); d.ap=num(d.ap,d.apMax,0,d.apMax);
 
   d.rels=arr(d.rels).filter(r=>r&&typeof r==='object'&&typeof r.n==='string'&&r.n.trim());
   d.rels.forEach(r=>{
@@ -1983,10 +1989,10 @@ function draw(){
     bar("شادی","😊",G.happy)+bar("سلامتی","❤️",G.health)+
     bar("هوش","🤓",G.smarts)+bar("جذابیت","🌤️",G.looks)+
     bar("شانس","🍀",G.luck);
-  // نوار فصل و امتیاز اقدام
-  const sIdx=(G.season===undefined?0:G.season), S=SEASONS[sIdx];
+  // نوار ماه و امتیاز اقدام — ماه از تقویم جهانی مشترک
+  const mIdx=(G.month===undefined?gMonthOfYear():G.month);
   const apEl=document.getElementById('apSeason');
-  if(apEl)apEl.textContent=`${S.e} ${S.n}`;
+  if(apEl)apEl.textContent=`${MONTH_E[mIdx]||'📅'} ${MONTHS[mIdx]}`;
   const pips=document.getElementById('apPips');
   if(pips){
     const mx=Math.max(G.apMax||apMaxFor(),ap());
@@ -2004,8 +2010,8 @@ function draw(){
   }else{
     const ready=seasonsReady();
     if(ready>0){
-      ab.innerHTML=(sIdx<3?'<span class="pl">+</span><span class="tx">فصل</span>'
-                          :'<span class="pl">+</span><span class="tx">سال</span>');
+      ab.innerHTML=(mIdx<11?'<span class="pl">+</span><span class="tx">ماه</span>'
+                           :'<span class="pl">+</span><span class="tx">سال</span>');
       ab.classList.remove('wait');
     }else{
       /* منتظر زمان واقعی — شمارش معکوس روی دکمه */
@@ -2118,31 +2124,43 @@ function toast(t,c=''){closeM();ev(t,c);clampStats();if(G&&G.alive){sanity(true)
 ================================================================= */
 /* دکمهٔ اصلی: یک فصل جلو می‌رود. هر چهار فصل، یک سال کامل می‌شود. */
 /* ================================================================
-   ═══ سامانهٔ زمان واقعی ═══
-   یک سال زندگی = یک روز واقعی (چهار فصل × ۶ ساعت)
-   بر پایهٔ تحقیق: بازی‌های شبیه‌ساز/آیدل بهترین نگهداشت را با
-   «حلقهٔ عادت روزانه» و جلسه‌های ۵ تا ۱۵ دقیقه‌ای دارند.
-   پس: هر ۶ ساعت یک فصل → روزی ۲ تا ۴ بار ورود طبیعی است.
-   غیبت هم جبران می‌شود (تا سقف) تا کسی عقب نماند.
+   ═══ سامانهٔ زمان واقعی — تقویم جهانی مشترک ═══
+   هر ماه زندگی = ۲ ساعت واقعی → یک سال کامل = یک روز واقعی.
+   ماه برای «همه» یکی است: ساعت دیوار تعیین می‌کند الان چه ماهی است
+   (به وقت ایران؛ مثلاً ۱۲ ظهر تا ۲ بعدازظهر همیشه «مهر» است).
+   اگر بازیکنی غیبت کند، ماه‌های عقب‌افتاده را پشت سر هم بازی می‌کند
+   (تا سقف) و دوباره به تقویم مشترک می‌رسد.
 ================================================================= */
-const SEASON_MS   = 6*60*60*1000;      /* هر فصل ۶ ساعت واقعی */
-const OFFLINE_CAP = 8;                 /* حداکثر ۸ فصل (۲ سال) جبران غیبت */
-const SKIP_COST   = 3;                 /* بخت لازم برای رد کردن انتظار */
+const MONTH_MS   = 2*60*60*1000;       /* هر ماه ۲ ساعت واقعی */
+const MONTH_TZ   = 3.5*60*60*1000;     /* مرز ماه‌ها به وقت ایران */
+const MONTH_EPOCH= Date.UTC(2026,7,15,0,0,0)-MONTH_TZ; /* لنگر مشترک با جهان */
+const OFFLINE_CAP = 12;                /* حداکثر ۱۲ ماه (یک سال) جبران غیبت */
 
 function nowMs(){return Date.now();}
-/* چند فصل آماده است؟ */
+/* شمارندهٔ مطلق ماه جهانی — برای همهٔ بازیکن‌ها یکی است */
+function gMonthAbs(){return Math.floor((nowMs()-MONTH_EPOCH)/MONTH_MS);}
+/* ماهِ سالِ جهانی: ۰=فروردین … ۱۱=اسفند — ساعت ۰۰ تا ۰۲ بامداد فروردین است */
+function gMonthOfYear(){return ((gMonthAbs()%12)+12)%12;}
+function gMonthName(){return MONTHS[gMonthOfYear()];}
+/* چند ماه برای این بازیکن آماده است؟ */
 function seasonsReady(){
   if(!G)return 0;
   if(G.tFree)return 99;                       /* حالت آزاد (تست/ادمین) */
-  if(!G.tNext)return 1;                       /* اولین بار */
-  const left=G.tNext-nowMs();
-  if(left>0)return 0;
-  /* غیبت طولانی: چند فصل جبران می‌شود */
-  return Math.min(OFFLINE_CAP,1+Math.floor(-left/SEASON_MS));
+  if(typeof CORE!=='undefined'&&CORE&&CORE.headless)return 99; /* شبیه‌سازی */
+  const gm=gMonthAbs();
+  if(G.mSeen===undefined){                    /* اولین بار: یک ماه عقب‌تر بایست */
+    G.mSeen=gm-1;                             /* تا اولین کلیک به ماه مشترک برسی */
+    G.month=(((gm-1)%12)+12)%12;
+    G.season=Math.floor(G.month/3);
+  }
+  /* سقف جبران: بیش از یک سال عقب‌ماندگی انبار نمی‌شود */
+  if(G.mSeen<gm-OFFLINE_CAP)G.mSeen=gm-OFFLINE_CAP;
+  return Math.max(0,gm-G.mSeen);
 }
 function seasonWaitMs(){
-  if(!G||!G.tNext)return 0;
-  return Math.max(0,G.tNext-nowMs());
+  /* فاصله تا مرز ماه جهانی بعدی */
+  const el=(nowMs()-MONTH_EPOCH)%MONTH_MS;
+  return Math.max(0,MONTH_MS-el);
 }
 function seasonCountdown(){
   const ms=seasonWaitMs();
@@ -2152,31 +2170,19 @@ function seasonCountdown(){
   const s2=Math.floor(ms%60000/1000);
   return `${fa(m)} دقیقه و ${fa(s2)} ثانیه`;
 }
-/* بعد از گذراندن یک فصل، زمان بعدی را قفل کن */
+/* مصرف یک ماه از تقویم مشترک — ماهِ نمایشی همیشه از همین مشتق می‌شود
+   تا بازیکن پس از هر جبران غیبت دوباره به ماه مشترک همه برسد. */
 function seasonLock(){
   if(!G)return;
-  const t=nowMs();
-  /* اگر خیلی عقب مانده، از الان می‌شماریم تا انبار نشود */
-  if(!G.tNext||G.tNext<t-OFFLINE_CAP*SEASON_MS)G.tNext=t+SEASON_MS;
-  else G.tNext=Math.max(t,G.tNext)+SEASON_MS;
-}
-/* خرید عبور از انتظار با بخت */
-function seasonSkip(){
-  const ms=seasonWaitMs();
-  if(ms<=0){toast("فصل بعدی همین حالا آماده است.",'m');return;}
-  const hoursLeft=Math.ceil(ms/3600000);
-  const cost=Math.max(1,Math.min(12,Math.ceil(hoursLeft/2)*SKIP_COST/3));
-  const c=Math.max(1,Math.round(cost));
-  ask("⏩ رد کردن انتظار",
-    `<b>${seasonCountdown()}</b> تا فصل بعد مانده.<br><br>
-     با <b>⭐ ${fa(c)} بخت</b> می‌توانی همین حالا ادامه بدهی.`,
-    [{t:`⭐ ${fa(c)} بخت — ادامه بده`,c:"grn",f:()=>{
-        if(!bakhtSpend(c,'رد کردن انتظار')){toast("❌ بخت کافی نداری.",'b');return;}
-        G.tNext=nowMs();
-        toast("⏩ زمان جلو رفت.",'m');
-        draw();
-      }},
-     {t:"صبر می‌کنم",c:"gray",f:()=>{}}]);
+  if(G.tFree||(typeof CORE!=='undefined'&&CORE&&CORE.headless)){
+    /* حالت تست/شبیه‌سازی: تقویم واقعی دست نمی‌خورد */
+    G.__simM=(G.__simM===undefined?(G.month|0):G.__simM)+1;
+    G.month=((G.__simM%12)+12)%12;
+    return;
+  }
+  if(G.mSeen===undefined)seasonsReady();
+  G.mSeen++;
+  G.month=((G.mSeen%12)+12)%12;
 }
 /* ساعت زنده: وقتی منتظری، دکمه هر ثانیه به‌روز می‌شود */
 var TCLOCK=null;
@@ -2203,13 +2209,11 @@ function startClock(){
 }
 /* پیام خوش‌آمد بعد از غیبت */
 function offlineWelcome(){
-  if(!G||!G.alive||!G.tNext)return;
-  const left=G.tNext-nowMs();
-  if(left>=0)return;
-  const miss=Math.floor(-left/SEASON_MS);
-  if(miss<2)return;
-  const capped=Math.min(OFFLINE_CAP,miss+1);
-  ev(`🕰️ ${fa(miss)} فصل نیامدی — ${fa(capped)} فصل برایت ذخیره شده است.`,'m');
+  if(!G||!G.alive||G.mSeen===undefined)return;
+  const miss=gMonthAbs()-G.mSeen;
+  if(miss<3)return;
+  const capped=Math.min(OFFLINE_CAP,miss);
+  ev(`🕰️ ${fa(miss)} ماه نبودی — ${fa(capped)} ماه برایت ذخیره شده است.`,'m');
 }
 
 function ageUp(){
@@ -2227,67 +2231,74 @@ function ageUp(){
                  {t:"بازگشت به منو",c:"gray",f:()=>{popAll();showMenu();}}]);
     return;
   }
-  /* ---- دروازهٔ زمان واقعی ---- */
+  /* ---- دروازهٔ زمان واقعی: تقویم جهانی مشترک ---- */
   const ready=seasonsReady();
   if(ready<=0){
     popAll();
-    ask(`⏳ ${SEASONS[G.season||0].e} فصل در جریان است`,
-      `زمان در ویت‌لایف واقعی است — هر فصل <b>۶ ساعت</b> طول می‌کشد و
-       یک سال کامل زندگی، یک روز واقعی است.<br><br>
-       تا فصل بعد: <b style="color:#2b5cad">${seasonCountdown()}</b><br><br>
-       در این فاصله می‌توانی کارهای این فصل را انجام بدهی.`,
-      [{t:"⏩ رد کردن انتظار با بخت",c:"grn",f:()=>{seasonSkip();}},
-       {t:"باشد، کارهایم را می‌کنم",c:"gray",f:()=>{}}]);
+    ask(`⏳ ${gMonthName()} در جریان است`,
+      `تقویم ویت‌لایف برای همهٔ بازیکن‌ها یکی است — الان همه‌جا
+       <b>${gMonthName()}</b> است و هر ماه <b>۲ ساعت</b> واقعی طول می‌کشد.<br><br>
+       تا ${MONTHS[(gMonthOfYear()+1)%12]}: <b style="color:#2b5cad">${seasonCountdown()}</b><br><br>
+       در این فاصله می‌توانی کارهای آزاد این ماه را انجام بدهی —
+       فقط کارهای بزرگ به ماه تازه نیاز دارند.`,
+      [{t:"باشد، کارهایم را می‌کنم",c:"gray",f:()=>{}}]);
     return;
   }
   popAll();
-  if(G.season===undefined)G.season=0;
-  if(G.ap===undefined){G.ap=3;G.apMax=3;}
+  if(G.month===undefined)G.month=gMonthOfYear();
+  if(G.season===undefined)G.season=Math.floor((G.month||0)/3);
+  if(G.ap===undefined){G.ap=AP_PER_MONTH;G.apMax=AP_PER_MONTH;}
 
   // هشدار اگر امتیاز اقدام استفاده‌نشده دارد
   if(G.ap>0&&!G.skipApWarn&&G.age>=6){
     const left=G.ap;
-    ask(`${SEASONS[G.season].e} پایان ${SEASONS[G.season].n}`,
-      `هنوز <b>${fa(left)}</b> امتیاز اقدام استفاده‌نشده داری. اگر فصل را تمام کنی، از دست می‌رود.`,
+    ask(`📅 پایان ${MONTHS[G.month||0]}`,
+      `هنوز <b>${fa(left)}</b> امتیاز اقدام استفاده‌نشده داری. اگر ماه را تمام کنی، از دست می‌رود.`,
       [{t:"می‌خواهم از آن استفاده کنم",c:"grn",f:()=>{}},
-       {t:"فصل را تمام کن",c:"gray",f:()=>{G.skipApWarn=true;ageUp();G.skipApWarn=false;}},
+       {t:"ماه را تمام کن",c:"gray",f:()=>{G.skipApWarn=true;ageUp();G.skipApWarn=false;}},
        {t:"دیگر نپرس",c:"gray",f:()=>{G.noApWarn=true;G.skipApWarn=true;ageUp();G.skipApWarn=false;}}]);
     if(!G.noApWarn)return;
   }
 
-  seasonLock();
-  seasonTick();
-  try{if(NET.on&&G.season===3)NET.push();}catch(e){}
-  if(G.season<3){ G.season++; G.apMax=apMaxFor(); G.ap=G.apMax; seasonHead(); draw(); save(); return; }
+  const prevMonth=(G.month|0);
+  seasonLock();                 /* ماه تازه را از تقویم مشترک می‌گیرد */
+  if(G.month===prevMonth)G.month=(prevMonth+1)%12;  /* محافظ لبه */
+  const newSeason=Math.floor(G.month/3);
+  const seasonChanged=newSeason!==G.season;
+  G.season=newSeason;
+  /* رویدادهای سنگین فصلی فقط سر فصل؛ بافت سبک هر ماه */
+  monthTick(seasonChanged);
+  try{if(NET.on&&G.month===0)NET.push();}catch(e){}
+  if(G.month!==0){ G.apMax=apMaxFor(); G.ap=G.apMax; seasonHead(); draw(); save(); return; }
 
-  // ---- پایان سال ----
+  // ---- پایان سال (اسفند تمام شد) ----
   tmSnap();                       // نقطهٔ بازگشت ماشین زمان
-  G.season=0; G.apMax=apMaxFor(); G.ap=G.apMax;
+  G.apMax=apMaxFor(); G.ap=G.apMax;
   yearTick();
 }
 
-/* رویدادهای درون‌فصلی: سبک‌تر از رویدادهای سالانه */
-function seasonTick(){
-  const S=SEASONS[G.season];
+/* رویدادهای ماهانه: چگالی یک‌سومِ فصل قدیم تا با ۱۲ ماه اسپم نشود */
+function monthTick(seasonChanged){
   worldSync();                 /* جهان مشترک را با بازیکن هماهنگ کن */
+  G.fUses=0;                   /* شمارندهٔ کارهای آزاد این ماه صفر می‌شود */
   energyTick();
-  focusPayoff();
-  npcSpawnTick();
-  if(CH(.75))genEvent();
-  if(CH(.35))genEvent();
-  seasonEvent();
-  if(CH(.45))seasonEvent();
-  if(CH(.30))seasonDilemma();
-  if(CH(.16))deepDilemma();
-  if(CH(.45))genMicroEvent();
-  if(CH(.20))genDilemma();
-  try{ if(G.biz)bizDilemma(); }catch(e){}
+  if(seasonChanged)focusPayoff();   /* پاداش تمرکز: مثل قبل ۴ بار در سال */
+  if(seasonChanged)npcSpawnTick();
+  if(CH(.40))genEvent();
+  if(seasonChanged||CH(.25))seasonEvent();
+  if(CH(.12))seasonDilemma();
+  if(CH(.06))deepDilemma();
+  if(CH(.25))genMicroEvent();
+  if(CH(.08))genDilemma();
+  try{ if(G.biz&&CH(.4))bizDilemma(); }catch(e){}
   goalTick();
-  goalGenTick();
+  if(seasonChanged)goalGenTick();
   clampStats();
   sanity(true);
   try{ tutTick(); }catch(e){}
 }
+/* سازگاری با کدهای قدیمی که seasonTick صدا می‌زنند */
+function seasonTick(){return monthTick(true);}
 
 /* رویدادهای کوچک فصلی — بافت روزمرهٔ زندگی */
 /* ---------- اهداف: کارهای چندفصلی که به زندگی جهت می‌دهند ---------- */
@@ -2481,10 +2492,10 @@ function seasonDilemma(){
 }
 
 function seasonHead(){
-  const S=SEASONS[G.season];
+  const m=G.month===undefined?gMonthOfYear():G.month;
   const f=document.getElementById('feed');
   const d=document.createElement('div');d.className='seasonHead';
-  const txt=`${S.e} ${S.n} — ${fa(G.age)} سالگی`;
+  const txt=`${MONTH_E[m]||'📅'} ${MONTHS[m]} — ${fa(G.age)} سالگی`;
   if(G)G.feed.push({t:txt,sh:1});
   d.textContent=txt;f.appendChild(d);f.scrollTop=f.scrollHeight;
 }
@@ -5953,7 +5964,7 @@ function rel(i,k){
   const r=REL(i); if(!r){popPage();return;}
   deepen(r);
   popPage();
-  if(!spendAP(1))return;
+  if(!spendAP(0))return;
   const pp=personaOf(r);
   const romantic=["همسر","شریک عاطفی"].includes(r.r);
   const match=matchScore(r);
@@ -6326,7 +6337,7 @@ function findLove(){
 }
 function findFriend(){
   popPage();
-  if(!spendAP(1))return;
+  if(!spendAP(0))return;
   const ch=.42+trt('extr')/240+trt('kind')/300+(G.happy-50)/400;
   if(LCH(ch,1)){
     const x=makeNPC({r:"دوست",e:"🧑‍🤝‍🧑",age:G.age+R(-6,6),rel:R(28,48)});
@@ -6359,7 +6370,7 @@ function pActivities(){
   h+=sec("خود و زندگی روزمره");
   h+=row({ic:CN().e,t:"کشور من",s:`${CN().n} — قوانین، اقتصاد و فرهنگ`,on:"pCountry()"});
   h+=row({ic:"🛠️",t:"پروژه‌های بلندمدت",s:`${fa((G.gprojects||[]).length)} در جریان • ${fa((G.gprojDone||[]).length)} تمام‌شده`,on:"pProjectsGen()"});
-  h+=row({ic:"🗓️",t:"برنامهٔ فصل",s:G.focus?("تمرکز: "+FOCUS.find(x=>x.k===G.focus).n):"تمرکز این فصل را انتخاب کن",on:"pPlan()"});
+  h+=row({ic:"🗓️",t:"برنامهٔ سال",s:G.focus?("تمرکز: "+FOCUS.find(x=>x.k===G.focus).n):"تمرکز این دوره را انتخاب کن",on:"pPlan()"});
   h+=row({ic:"🎯",t:"اهداف زندگی",s:`${fa((G.goals||[]).length+(G.ggoals||[]).length)} هدف فعال • ${fa((G.goalsDone||[]).length+(G.ggoalsDone||[]).length)} محقق‌شده`,on:"pGoals()"});
   h+=row({ic:"💇",t:"ظاهر و سبک",s:"مو، پوست، خالکوبی، تناسب اندام",on:"pStyle()"});
   h+=row({ic:"🎯",t:"سرگرمی و فراغت",s:G.hobby||"وقت آزادت را پر کن",on:"pHobby()"});
@@ -6435,7 +6446,7 @@ function pActivities(){
 }
 function act(k){
   popAll();
-  if(!["appeal","riot"].includes(k)&&!spendAP(1))return;
+  if(!["appeal","riot"].includes(k)&&!spendAP(0))return;
   const F={
     gym:()=>{if(!G.jail)pay(15);G.health+=R(4,10);G.looks+=R(1,5);G.happy+=R(0,4);ev("🏋️ ورزش کردم و حالم بهتر شد.",'g');},
     lib:()=>{G.smarts+=R(3,9);G.happy+=R(-2,3);ev("📚 چند کتاب خواندم و باهوش‌تر شدم.",'g');},
@@ -6452,7 +6463,7 @@ function act(k){
       G.kids++;G.happy+=R(10,20);G.karma+=10;ev("🧒 فرزندی را به سرپرستی گرفتم!",'g');},
     insure:()=>{if(G.insured){ev("🛡️ بیمه‌ات از قبل فعال است.",'w');return;}
       pay(60);G.insured=true;ev("🛡️ بیمه عمر و درمان خریدم.",'g');},
-    lawsuit:()=>{const c=R(30,120);pay(c);
+    lawsuit:()=>{if(!spendAP(1))return;const c=R(30,120);pay(c);
       if(LCH(.45,1.3)){const m=LR(100,1800,1.2);G.cash+=m;ev(`⚖️ در دادگاه پیروز شدم و ${M(m)} غرامت گرفتم.`,'m');}
       else ev(`⚖️ شکایتم رد شد و ${M(c)} هزینه دادم.`,'b');},
     rename:()=>{modal(`<input id="nn" placeholder="نام جدید" value="${G.name}">
@@ -6648,7 +6659,7 @@ function soc(k){
   popPage();
   /* هر کنش شبکهٔ اجتماعی انرژی و امتیاز اقدام می‌خواهد */
   if(['post','viral','drama'].includes(k)){
-    if(!spendAP(1))return;
+    if(!spendAP(0))return;
     /* تکرار بیش از حد در یک سال، بازده را می‌شکند */
     if(G.socY!==G.age){G.socY=G.age;G.socN=0;}
     G.socN=(G.socN|0)+1;
@@ -7167,8 +7178,9 @@ function pStyle(){
 function styleAct(k){
   popAll();
   const A=G.age;
-  const need={hair:1,dye:1,lens:1,skin:1,teeth:1,groom:1,clothes:1,luxury:1,bling:1,
-              tattoo:1,pierce:1,diet:1,run:1,gymhard:1,yoga:1,binge:1,surgery:2,hairplant:2}[k]||1;
+  /* کارهای ظاهری روزمره آزادند؛ فقط جراحی و کاشت مو «تصمیم بزرگ»اند */
+  const need={hair:0,dye:0,lens:0,skin:0,teeth:0,groom:0,clothes:0,luxury:0,bling:0,
+              tattoo:0,pierce:0,diet:0,run:0,gymhard:0,yoga:0,binge:0,surgery:2,hairplant:2}[k]||0;
   if(!spendAP(need))return;
   const F={
     /* ---- مو و چهره ---- */
@@ -7271,7 +7283,7 @@ function pHobby(){
 }
 function hob(k){
   popAll();
-  if(!spendAP(1))return;
+  if(!spendAP(0))return;
   const F={
     do:()=>{G.happy+=R(4,11);G.stress=cl(G.stress-R(3,10));ev(`🎯 وقتم را صرف ${G.hobby} کردم و لذت بردم.`,'g');},
     new:()=>{const old=G.hobby;G.hobby=P(HOBBIES.filter(x=>x!==old));G.happy+=R(2,8);
@@ -7314,7 +7326,7 @@ function pSkills(){
 function practice(k){
   const x=SKILLS.find(y=>y.k===k); if(!x)return;
   popAll();
-  if(!spendAP(1))return;
+  if(!spendAP(0))return;
   if(!skl(k)){if(G.cash+G.bank<x.c){ev("❌ هزینهٔ کلاس را ندارم.",'b');draw();return;}pay(x.c);}
   const g=addSkill(k,R(6,17)+Math.round(G.smarts/22));
   G.happy+=R(0,4);G.stress=cl(G.stress+R(0,4));
@@ -7495,7 +7507,7 @@ function gigWork(k){
   popPage();
   const d=gigData(k); if(!d)return;
   const g=gigList()[k]; if(!g){toast("اول باید شروعش کنی.",'w');return;}
-  if(!spendAP(1))return;
+  if(!spendAP(1))return;   /* درآمد مستقیم دارد — کار آزاد نیست */
   const sk=skl(d.sk);
   /* رشد آهسته و واقع‌گرایانه — ساختن یک برند سال‌ها طول می‌کشد.
      هرچه بالاتر بروی، هر پله سخت‌تر می‌شود. */
@@ -8512,7 +8524,7 @@ function pStartGender(){
     از این پس، هر بار که بمیری، زندگی با یکی از <b>وارثانت</b> ادامه پیدا می‌کند
     و جنسیت او را خواهی داشت.</p></div>`;
   h+=`<div class="note" style="background:#fff4d6;border-right:3px solid #f59f00">
-    ⏳ زمان در این جهان واقعی است: هر فصل <b>۶ ساعت</b> و هر سال زندگی <b>یک روز</b> طول می‌کشد.</div>`;
+    ⏳ زمان در این جهان واقعی و برای همه مشترک است: هر ماه <b>۲ ساعت</b> و هر سال زندگی <b>یک روز</b> طول می‌کشد — همهٔ بازیکن‌ها همیشه در یک ماه‌اند.</div>`;
   h+=sec("جنسیت اولین زندگی");
   h+=row({ic:"👦",t:"پسر",s:"خط خاندان با یک مرد آغاز می‌شود",on:"startDynasty('m')"});
   h+=row({ic:"👧",t:"دختر",s:"خط خاندان با یک زن آغاز می‌شود",on:"startDynasty('f')"});
@@ -8716,7 +8728,7 @@ function continueAsHeir(i){
     mkt:{stock:100,crypto:100,gold:100},port:{stock:0,crypto:0,gold:0},
     biz:null,office:null,officeY:0,
     grandkids:0,books:0,awards:[],arcs:[],arcSeen:{},retired:false,pension:0,careerY:0,
-    visited:[],ms:{},season:0,ap:3,apMax:3,goals:[],goalsDone:[],energy:100,
+    visited:[],ms:{},season:0,month:0,ap:5,apMax:5,goals:[],goalsDone:[],energy:100,
     projects:[],projDone:[],focus:null,servedMil:false,tookExam:false,examRank:null,
     seasonLog:0,weekPlan:null,gen:gen,inherited:share
   };
@@ -8845,7 +8857,7 @@ function findTenant(i){
   const a=G.assets[ii];popPage();
   if(a.k!=='h'){ev("❌ فقط ملک را می‌شود اجاره داد.",'b');draw();return;}
   if(a.ten){ev("🔑 این ملک همین حالا مستأجر دارد.",'w');draw();return;}
-  if(!spendAP(1))return;
+  if(!spendAP(0))return;
   const npc=makeNPC({age:R(20,60)});
   const quality=R(1,100);
   a.ten={n:npc.n,job:npc.job,rent:rentFor(a),rel:R(45,85),y:0,q:quality};
@@ -8858,7 +8870,7 @@ function tenantAct(i,k){
   if(!a.ten){draw();return;}
   const t=a.ten;
   if(k==='raise'){
-    if(!spendAP(1))return;
+    if(!spendAP(0))return;
     const up=R(8,25);
     if(t.rel>50&&LCH(.6,1)){t.rent=Math.round(t.rent*(1+up/100));t.rel=cl(t.rel-R(4,12));
       ev(`📈 اجاره را ${fa(up)}٪ بالا بردم؛ ${t.n} قبول کرد.`,'m');}
@@ -8876,7 +8888,7 @@ function tenantAct(i,k){
       pay(R(20,120));t.rel=cl(t.rel-20);}
   }
   if(k==='visit'){
-    if(!spendAP(1))return;
+    if(!spendAP(0))return;
     t.rel=cl(t.rel+R(5,14));ev(`🚶 سری به ملک زدم و با ${t.n} صحبت کردم.`,'g');
   }
   draw();
@@ -8954,7 +8966,7 @@ function prisonJoin(k){
   const g=GANGS.find(x=>x.k===k);if(!g)return;
   popPage();
   const p=prisonState();
-  if(!spendAP(1))return;
+  if(!spendAP(0))return;
   const need=k==="lions"?55:k==="north"?40:30;
   const me=p.rep+skl('fight')*0.4+(k==="books"?G.smarts*0.4:0)+trt('brav')*0.2;
   if(me>need||LCH(.45,1)){
@@ -8970,17 +8982,17 @@ function prisonAct(k){
   popPage();
   const p=prisonState();
   const F={
-    gym:()=>{if(!spendAP(1))return;G.health+=R(3,9);p.rep=cl(p.rep+R(2,6));addSkill('fight',R(1,4));
+    gym:()=>{if(!spendAP(0))return;G.health+=R(3,9);p.rep=cl(p.rep+R(2,6));addSkill('fight',R(1,4));
       ev("💪 در حیاط زندان وزنه زدم؛ هیکلم ترسناک‌تر شد.",'g');},
-    lib:()=>{if(!spendAP(1))return;G.smarts+=R(2,7);p.par+=R(1,3);
+    lib:()=>{if(!spendAP(0))return;G.smarts+=R(2,7);p.par+=R(1,3);
       const s=P(["lang","write","chess","code"]);addSkill(s,R(2,6));
       ev(`📖 در کتابخانهٔ زندان روی ${skName(s)} کار کردم.`,'g');},
-    work:()=>{if(!spendAP(1))return;const m=R(2,10);G.cash+=m;p.par+=R(2,4);
+    work:()=>{if(!spendAP(0))return;const m=R(2,10);G.cash+=m;p.par+=R(2,4);
       ev(`🧹 در آشپزخانهٔ زندان کار کردم؛ ${M(m)} گرفتم.`,'g');},
-    rehab:()=>{if(!spendAP(1))return;p.par+=R(3,7);G.karma+=R(1,4);G.stress=cl(G.stress-R(3,10));
+    rehab:()=>{if(!spendAP(0))return;p.par+=R(3,7);G.karma+=R(1,4);G.stress=cl(G.stress-R(3,10));
       if(G.addicted&&CH(.25)){ev(`🙏 در برنامهٔ اصلاح، اعتیاد به ${G.addicted} را ترک کردم.`,'g');G.addicted=null;}
       else ev("🙏 در جلسات اصلاح شرکت کردم؛ پرونده‌ام بهتر شد.",'g');},
-    cell:()=>{if(!spendAP(1))return;
+    cell:()=>{if(!spendAP(0))return;
       if(LCH(.65,1)){const x=npcEnter("هم‌سلولی","🧑‍🦲","در زندان هم‌سلولی شدیم",{age:G.age+R(-10,15)});
         p.rep=cl(p.rep+R(2,7));ev(`🤝 با ${x.n} هم‌سلولی‌ام رفیق شدم.`,'g');}
       else{G.happy-=R(2,8);ev("😐 هم‌سلولی‌ام آدم سردی است؛ حرف نمی‌زند.",'w');}},
@@ -8990,7 +9002,7 @@ function prisonAct(k){
       else{G.health-=R(10,28);p.rep=cl(p.rep-R(2,8));p.par-=R(2,5);
         ev("🩸 حسابی کتک خوردم و به بهداری منتقل شدم.",'b');
         if(CH(.2)){G.jailT++;ev("⚖️ به‌خاطر نزاع، یک سال به حبسم اضافه شد.",'b');}}},
-    guard:()=>{if(!spendAP(1))return;
+    guard:()=>{if(!spendAP(0))return;
       if(LCH(.6,1)){p.par+=R(3,8);ev("👮 با نگهبان‌ها راه آمدم؛ پروندهٔ رفتاری‌ام تمیز شد.",'g');
         if(p.gang){p.rep=cl(p.rep-R(5,15));ev("👀 بقیه مرا خبرچین می‌دانند.",'w');}}
       else{p.rep=cl(p.rep-R(3,9));ev("👮 نگهبان محلم نگذاشت.",'w');}},
@@ -9102,9 +9114,9 @@ function fightAct(k){
     return false;
   };
   const F={
-    train:()=>{if(!spendAP(1))return;pay(30);const g=addSkill('fight',R(4,10));
+    train:()=>{if(!spendAP(0))return;pay(30);const g=addSkill('fight',R(4,10));
       G.health+=R(1,5);ev(`🥋 با مربی تمرین کردم؛ ${fa(g)} واحد قوی‌تر شدم.`,'g');},
-    cond:()=>{if(!spendAP(1))return;G.health+=R(4,11);G.stress=cl(G.stress-R(2,8));
+    cond:()=>{if(!spendAP(0))return;G.health+=R(4,11);G.stress=cl(G.stress-R(2,8));
       addSkill('fight',R(1,4));ev("🏃 آماده‌سازی بدنی کردم؛ نفسم بیشتر شد.",'g');},
     dope:()=>{f.dope=true;G.health-=R(2,8);G.karma-=5;
       ev("💊 دارو مصرف کردم؛ در مبارزهٔ بعدی قوی‌ترم اما تست خطرناک است.",'w');},
@@ -9116,7 +9128,7 @@ function fightAct(k){
         ev("🏆 کمربند قهرمانی لیگ را بالای سرم بردم!",'m');}},
     defend:()=>{const won=doFight(100,"دفاع از عنوان",()=>purse()*3);
       if(!won){f.belt=false;addFame(-R(5,15));ev("😞 کمربند را از دست دادم.",'b');}},
-    trash:()=>{if(!spendAP(1))return;
+    trash:()=>{if(!spendAP(0))return;
       if(LCH(.55,1)){addFame(R(5,16));ev("🎙️ مصاحبه‌ام همه‌جا پخش شد؛ بلیت‌ها گران‌تر می‌شود.",'m');}
       else{addFame(-R(2,8));G.karma-=4;ev("🎙️ حرف‌هایم بازتاب بدی داشت.",'w');}},
     retire:()=>{ask("بازنشستگی از رینگ؟",`با رکورد ${fa(f.w)} برد و ${fa(f.l)} باخت.`,[
@@ -9192,7 +9204,7 @@ function pBlackMarket(){
 function bmBuy(i){
   const ii=IDX(i,BM_GOODS); if(ii<0){popPage();return;}
   const g=BM_GOODS[ii];popPage();
-  if(!spendAP(1))return;
+  if(!spendAP(3))return;
   const price=LR(g.p[0],g.p[1],-0.6);
   if(G.cash+G.bank<price){ev("❌ پول کافی برای این معامله ندارم.",'b');draw();return;}
   const risk=g.risk*(CP().crime||1)*0.7*(G.broker?0.75:1);
@@ -9218,7 +9230,7 @@ function bmAct(i,k){
     const ii=IDX(i,G.bm||[]); if(ii<0){draw();return;}
     const it=G.bm[ii];
     const d=BM_GOODS.find(x=>x.k===it.k)||BM_GOODS[0];
-    if(!spendAP(1))return;
+    if(!spendAP(3))return;
     const risk=d.risk*(CP().crime||1)*0.55;
     if(CH(risk)){
       G.bm.splice(ii,1);G.crimes++;
@@ -9240,7 +9252,7 @@ function bmAct(i,k){
     draw();return;
   }
   if(k==='launder'){
-    if(!spendAP(1))return;
+    if(!spendAP(3))return;
     const amt=Math.min(G.cash,R(200,1500));
     if(amt<50){ev("❌ پول نقد کافی برای شست‌وشو ندارم.",'b');draw();return;}
     if(LCH(.65,1)){G.cash-=Math.round(amt*0.25);G.bank+=Math.round(amt*0.75);
@@ -9250,7 +9262,7 @@ function bmAct(i,k){
     draw();return;
   }
   if(k==='broker'){
-    if(!spendAP(1))return;
+    if(!spendAP(3))return;
     if(LCH(.55,1)){G.broker=true;npcEnter("دلال","🕵️","در بازار سیاه آشنا شدیم");
       ev("🤝 با یک دلال باتجربه آشنا شدم؛ از این به بعد ریسکم کمتر است.",'m');}
     else ev("🤝 هرکه را دیدم یا زندان بود یا خبرچین.",'w');
@@ -9978,7 +9990,7 @@ function pJobAd(i){
 function jobResearch(i){
   const L=jobMarket();const ii=IDX(i,L);if(ii<0){popPage();return;}
   const j=L[ii];popPage();
-  if(!spendAP(1))return;
+  if(!spendAP(0))return;
   const g=mkGen(gSeed("res"+ii+j.co));
   const findings=[
     ()=>{j.sal=Math.round(j.sal*g.f(1.05,1.25));ev(`🔍 فهمیدم ${j.co} برای این جایگاه بودجهٔ بیشتری دارد؛ در مذاکره ${M(j.sal)} گرفتم.`,'m');},
@@ -9994,7 +10006,7 @@ function jobResearch(i){
 function jobSearch(si){
   const ii=IDX(si,JOB_SECTOR); if(ii<0){popPage();return;}
   popPage();
-  if(!spendAP(1))return;
+  if(!spendAP(0))return;
   const sect=JOB_SECTOR[ii];
   const g=mkGen(gHash("srch"+Date.now()+Math.random()));
   if(!G.market)G.market={};
@@ -10248,7 +10260,7 @@ function pItem(k,i){
 function haggle(k,i){
   const L=shopList(k);const ii=IDX(i,L);if(ii<0){popPage();return;}
   const o=L[ii];popPage();
-  if(!spendAP(1))return;
+  if(!spendAP(0))return;
   const skill=skl('speak')*0.5+skl('biz')*0.4+G.smarts*0.15+(LK()-50)*0.3+trt('extr')*0.1;
   const g=mkGen(gHash("hag"+Math.random()));
   if(skill>g.i(20,80)){
@@ -10736,7 +10748,7 @@ function crimeGen(i){
   const L=genCrimeOps();
   const ii=IDX(i,L); if(ii<0){popAll();return;}
   const c=L[ii];popAll();
-  if(!spendAP(1))return;
+  if(!spendAP(3))return;
   const g=mkGen(gHash("cr"+Date.now()+Math.random()));
   const p=crimeChance(c);
   G.crimes++;
@@ -11331,7 +11343,7 @@ function bmBuyGen(i){
   const L=bmMarket();
   const ii=IDX(i,L); if(ii<0){popPage();return;}
   const o=L[ii];popPage();
-  if(!spendAP(1))return;
+  if(!spendAP(3))return;
   if(G.cash+G.bank<o.price){ev("❌ پول کافی برای این معامله ندارم.",'b');draw();return;}
   const risk=o.risk*((CP().crime)||1)*0.6*(G.broker?0.75:1);
   if(CH(risk)){
@@ -11628,35 +11640,34 @@ const SHOP_BAKHT=[
 const AP_COST={
   act:1, style:1, hob:1, rel:1, practice:1, soc:1,
   work:2,        // پروژهٔ بلندمدت
-  crime:2,       // جرم
+  crime:3,       // جرم — پرسودتر شد، پس گران‌تر (با ۵ اقدام در ماه)
   travel:2,      // سفر
   course:2,      // دورهٔ آموزشی
   fight:2,       // مبارزه
-  biz:2,         // کسب‌وکار
-  bm:2           // بازار سیاه
+  biz:3,         // کسب‌وکار
+  bm:3           // بازار سیاه
 };
 function apCostFor(kind){return AP_COST[kind]||1;}
 
-/* سقف امتیاز: کمتر و وابسته‌تر به وضعیت */
+/* سقف امتیاز: پایهٔ ثابت ۵ در ماه — فقط وضعیت خیلی بد کمش می‌کند */
 function apMaxFor2(){
-  let m=2;                                   // پایه از ۳ به ۲ کم شد
+  let m=AP_PER_MONTH;                        // هر ماه ۵ امتیاز اقدام
   const A=G.age;
-  if(A<6)m=1; else if(A<13)m=1; else if(A<18)m=2;
-  if(A>70)m=1;
+  if(A<6)m=2; else if(A<13)m=3;
+  if(A>70)m=Math.max(2,m-1);
   const en=(G.energy===undefined)?100:G.energy;
-  if(en>75)m+=1;                             // انرژی بالا پاداش دارد
-  if(en<25)m=Math.max(1,m-1);
-  if(G.stress>75)m=Math.max(1,m-1);
-  if(G.health<35)m=Math.max(1,m-1);
-  if(G.addicted)m=Math.max(1,m-1);
+  if(en<25)m=Math.max(2,m-1);
+  if(G.stress>75)m=Math.max(2,m-1);
+  if(G.health<35)m=Math.max(2,m-1);
+  if(G.addicted)m=Math.max(2,m-1);
   if(hasItem('gold'))m+=0;                   // نشان، قدرت نمی‌دهد (عمدی)
   if(hasItem('apmax'))m+=1;                  // تنها آیتمی که سقف را بالا می‌برد
-  return Math.max(1,Math.min(5,m));
+  return Math.max(1,Math.min(7,m));
 }
 /* انرژی: مصرف واقعی، بازیابی کند */
 function energyTick2(){
   if(G.energy===undefined)G.energy=100;
-  let e=R(4,11);                             // بازیابی از ۸-۲۰ کم شد
+  let e=R(12,22);                            // بازیابی ماهانه — بودجهٔ ۵ اقدام در ماه
   if(G.stress>70)e-=R(3,8);
   if(G.health<40)e-=R(2,6);
   if(G.age>70)e-=R(1,4);
@@ -11665,9 +11676,25 @@ function energyTick2(){
   const sleep=G.focus==='fun'?3:0;
   G.energy=cl(G.energy+e+sleep);
 }
-/* خرج امتیاز با هزینهٔ متغیر + پیشنهاد خرید وقتی کم می‌آورد */
+/* خرج امتیاز با هزینهٔ متغیر + پیشنهاد خرید وقتی کم می‌آورد
+   n=0 یعنی «کار آزاد»: امتیاز نمی‌خواهد ولی کمی انرژی می‌برد،
+   پس بین ماه‌ها همیشه کاری برای انجام دادن هست ولی بی‌نهایت نه. */
 function spendAP2(n,kind){
-  n=n||apCostFor(kind);
+  if(n===undefined||n===null)n=apCostFor(kind);
+  if(n<=0){
+    /* کار آزاد: انرژی می‌برد و هر تکرار در همان ماه خسته‌کننده‌تر است —
+       چند کار سبک در ماه طبیعی است، اسپم بی‌پایان نه. */
+    const en=(G.energy===undefined)?100:G.energy;
+    const used=(G.fUses|0);
+    const cost=R(3,7)+used*2;
+    if(en<cost){
+      if(!CORE.headless)toast("😮‍💨 خسته‌ام — این ماه دیگر توان کار سبک ندارم.",'w');
+      return false;
+    }
+    G.energy=cl(en-cost);
+    G.fUses=used+1;
+    return true;
+  }
   const have=(G.ap===undefined)?2:G.ap;
   if(have<n){
     CORE.emit('ap-blocked',{need:n,have:have});
@@ -11675,7 +11702,7 @@ function spendAP2(n,kind){
     return false;
   }
   G.ap-=n;
-  G.energy=cl((G.energy===undefined?100:G.energy)-R(6,16)*n);
+  G.energy=cl((G.energy===undefined?100:G.energy)-R(2,6)*n);
   return true;
 }
 /* لحظهٔ طلایی درآمدزایی: کاربر می‌خواهد کاری کند و نمی‌تواند */
@@ -11687,10 +11714,10 @@ function offerAP(need){
     f:()=>{if(bakhtSpend(3,'ap')){G.ap=(G.ap||0)+1;toast("⚡ یک امتیاز اقدام گرفتم.",'m');}}});
   if(canAd)opts.push({t:"🎬 تماشای ویدیو برای ۲ امتیاز",c:"",
     f:()=>watchAd('ap')});
-  opts.push({t:"باشد، فصل را تمام می‌کنم",c:"gray",f:()=>{}});
+  opts.push({t:"باشد، ماه را تمام می‌کنم",c:"gray",f:()=>{}});
   ask("⏳ توان کافی ندارم",
     `برای این کار <b>${fa(need)}</b> امتیاز اقدام لازم است و من <b>${fa(G.ap||0)}</b> دارم.
-     می‌توانم استراحت کنم تا فصل بعد، یا انرژی تازه بگیرم.`,opts);
+     می‌توانم صبر کنم تا ماه بعد، یا انرژی تازه بگیرم.`,opts);
 }
 
 /* ---------------------------------------------------------------
@@ -11938,13 +11965,13 @@ function shadeTitle(){
    همه دربارهٔ «دکمه‌ها» هستند و همه کوتاه و مبهم‌اند. */
 const SHADE_LINES={
   age:{
-    mischief:"اون دکمهٔ گندهٔ پایین… بزنش. ببینم چی می‌شه. <b>فصل</b> رد می‌شه، همین.",
-    liar:"اون دکمهٔ پایین هیچ کاری نمی‌کنه. …باشه، <b>فصل</b> رو رد می‌کنه. خواستم امتحانت کنم.",
-    polite:"اجازه بدید بگویم: دکمهٔ پایین <b>فصل</b> را جلو می‌برد. عجله لازم نیست.",
-    kindly:"اون دکمهٔ پایین <b>فصل</b> رو رد می‌کنه. هر وقت آماده بودی.",
-    cold:"دکمهٔ پایین. <b>فصل</b>. تمام.",
-    bold:"بزن اون دکمهٔ پایین رو. <b>فصل</b> می‌پره جلو. معطل چی هستی؟",
-    curious:"کنجکاوم بدونم اون دکمهٔ پایین چیه… ظاهراً <b>فصل</b> رو جلو می‌بره."
+    mischief:"اون دکمهٔ گندهٔ پایین… بزنش. ببینم چی می‌شه. <b>ماه</b> رد می‌شه، همین.",
+    liar:"اون دکمهٔ پایین هیچ کاری نمی‌کنه. …باشه، <b>ماه</b> رو رد می‌کنه. خواستم امتحانت کنم.",
+    polite:"اجازه بدید بگویم: دکمهٔ پایین <b>ماه</b> را جلو می‌برد. عجله لازم نیست.",
+    kindly:"اون دکمهٔ پایین <b>ماه</b> رو رد می‌کنه. هر وقت آماده بودی.",
+    cold:"دکمهٔ پایین. <b>ماه</b>. تمام.",
+    bold:"بزن اون دکمهٔ پایین رو. <b>ماه</b> می‌پره جلو. معطل چی هستی؟",
+    curious:"کنجکاوم بدونم اون دکمهٔ پایین چیه… ظاهراً <b>ماه</b> رو جلو می‌بره."
   },
   ap:{
     mischief:"اون نقطه‌های کوچیک بالا رو دیدی؟ <b>امتیاز اقدام</b>ه. تموم که شد… خب، تموم شده دیگه.",
@@ -12087,6 +12114,10 @@ function tutWelcome(){
 
 /* اولین هدف: کاربر باید از لحظهٔ اول بداند دنبال چیست */
 function firstGoal(){
+  if(!G||!G.alive)return;
+  /* اگر مودال دیگری بازه (مثلاً خوش‌آمد سایه)، صبر کن تا بسته شود —
+     وگرنه حرف سایه نیم‌ثانیه‌ای محو می‌شود و بازیکن هیچ‌چیز نمی‌فهمد */
+  if(modalOpen()){setTimeout(firstGoal,450);return;}
   const g=(typeof genGoal==='function')?genGoal():null;
   if(!g)return;
   if(!Array.isArray(G.ggoals))G.ggoals=[];
@@ -13756,7 +13787,7 @@ function adminAct(k){
           newLife("",Math.random()<.5?'m':'f',Math.floor(Math.random()*COUNTRIES.length));
           G.noApWarn=true;
           let g=0;
-          while(G.alive&&g++<420){ageUp();if(window.ASK&&window.ASK.length){
+          while(G.alive&&g++<1600){ageUp();if(window.ASK&&window.ASK.length){
             const a=window.ASK;window.ASK=null;try{a[0]();}catch(e){}}}
           res.push({age:G.age,nw:Math.round(netWorth()),cr:(G.crises||[]).length});
         }
@@ -13787,8 +13818,9 @@ function adminAct(k){
     rejectAll:()=>{const w=walLoad();w.pending=[];walSave();toast("🗑️ صف پاک شد.",'w');},
     giveRevive:()=>{if(!G)return;G.revive=(G.revive|0)+1;toast("❤️‍🩹 یک فرصت دوباره اضافه شد.",'m');},
     skip10:()=>{if(!G||!G.alive)return;G.noApWarn=true;G.skipApWarn=true;
-      let n=0;while(n<40&&G.alive){try{ageUp();}catch(e){break;}n++;}
-      G.skipApWarn=false;draw();toast("⏭️ ۱۰ سال جلو رفت.",'m');},
+      const was=G.tFree;G.tFree=true;
+      let n=0;while(n<120&&G.alive){try{ageUp();}catch(e){break;}n++;}
+      G.tFree=was;G.skipApWarn=false;draw();toast("⏭️ ۱۰ سال جلو رفت.",'m');},
     lock:()=>{ADMSESS='';NET.admSession='';
       try{NET.admCall('/api/admin/logout',{});}catch(e){}
       toast("🔒 نشست امن بسته شد.",'w');popAll();pAdmin();},
@@ -14157,7 +14189,7 @@ function watchTV(){
     toast("📺 جایی که زندگی می‌کنی تلویزیون ندارد.",'w');
     return;
   }
-  if(!spendAP(1))return;
+  if(!spendAP(0))return;
   /* اثر ریز و احتمالی روی آمار — تلویزیون معجزه نمی‌کند */
   const gains=[];
   if(CH(.55)){G.happy+=R(1,3);gains.push("کمی سرگرم شدم");}
@@ -15191,5 +15223,6 @@ function menuHelp(){
   },165);
 })();
 </script>
-<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a2cbe6f59f0ed34e',t:'MTc4NzAwMzUwOA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a2cc65b46aee8b96',t:'MTc4NzAwODY5OQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f"}' crossorigin="anonymous"></script>
+</body>
 </html>
