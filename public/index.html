@@ -14819,7 +14819,11 @@ const NET={
       const r=await fetch(this.base+path,{method:'POST',headers:h,
         body:JSON.stringify(body||{}),signal:ctrl.signal});
       clearTimeout(t);
-      if(!r.ok)return null;
+      if(!r.ok){
+        /* بدنهٔ خطا هم مهم است — مثل world_reset که کلاینت باید بفهمد */
+        const j=await r.json().catch(()=>null);
+        return (j&&j.err)?j:null;
+      }
       return await r.json();
     }catch(e){return null;}
   },
@@ -14842,6 +14846,36 @@ const NET={
     this.refLink=m.refLink||'';
     this.starsOn=!!m.stars;
     if(m.isAdmin)ADMIN=true;
+    /* ═══ دیوار ریست جهان ═══
+       اگر مدیر جهان را ریست کرده و ذخیرهٔ این دستگاه قدیمی‌تر از مهر
+       ریست است، همین‌جا پاک می‌شود تا با سینک بعدی به سرور برنگردد. */
+    this.wr=Number(m.wr||0);
+    try{
+      if(this.wr>0){
+        const seen=Number(localStorage.getItem('waitlife_wrv')||0);
+        if(seen<this.wr){
+          const hard=m.wrMode==='hard';
+          const keys=hard?['waitlife_fa','waitlife_meta','waitlife_wallet','waitlife_tm']
+                         :['waitlife_fa','waitlife_meta','waitlife_tm'];
+          keys.forEach(k=>{try{localStorage.removeItem(k);}catch(e){}});
+          if(hard){WAL=null;}
+          META=null;G=null;
+          localStorage.setItem('waitlife_wrv',String(this.wr));
+          setTimeout(()=>{
+            try{shellSync();showMenu();}catch(e){}
+            modal(`<div style="font-size:44px;padding-top:14px">🌍</div>
+              <p style="line-height:2;font-size:14px;padding:6px 14px 12px">
+                <b>جهان ویت‌لایف از نو آغاز شد!</b><br>
+                همهٔ بازیکن‌ها از صفر شروع می‌کنند${hard?'':' — بختت محفوظ ماند'}.<br>
+                زندگی تازه‌ات را بساز.</p>
+              <!--ACTIONS--><button class="btn grn" onclick="closeM()">شروع تازه</button>`,
+              "🌋 جهان نو");
+          },900);
+        }else{
+          localStorage.setItem('waitlife_wrv',String(this.wr));
+        }
+      }
+    }catch(e){}
     /* هدیهٔ ورود با لینک دعوت */
     if(m.refBonus>0){
       try{
@@ -14881,12 +14915,25 @@ const NET={
     if(G&&G.name){
       /* ثروت، نسل و امتیاز را سرور خودش از روی همین ذخیره حساب می‌کند —
          فرستادنشان از اینجا بی‌اثر است و عمداً حذف شده تا قابل جعل نباشد. */
+      try{if(this.wr)G.wrv=this.wr;}catch(e){}   /* مهر جهانِ فعلی روی ذخیره */
       body.save=G; body.wallet=w;
       body.fam=G.fam||'';
     }else{
       body.wallet=w;
     }
     const r=await this.call('/api/save',body);
+    /* سرور گفت این ذخیره مال جهانِ قبل از ریست است → پاکش کن */
+    if(r&&r.err==='world_reset'){
+      try{
+        ['waitlife_fa','waitlife_meta','waitlife_tm'].forEach(k=>localStorage.removeItem(k));
+        META=null;G=null;
+        localStorage.setItem('waitlife_wrv',String(r.wr||Date.now()));
+        this.wr=Number(r.wr||0);
+        shellSync();showMenu();
+        toast("🌋 جهان از نو آغاز شده — زندگی تازه‌ات را بساز.",'m');
+      }catch(e){}
+      return;
+    }
     if(r&&r.ok){
       /* سرور موجودی رسمی را برمی‌گرداند — همان ملاک است */
       try{
@@ -15223,6 +15270,5 @@ function menuHelp(){
   },165);
 })();
 </script>
-<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a2cc65b46aee8b96',t:'MTc4NzAwODY5OQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f"}' crossorigin="anonymous"></script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a2ccae0b8a265160',t:'MTc4NzAxMTY2Mg=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
