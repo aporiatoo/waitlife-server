@@ -4,7 +4,7 @@
 ================================================================= */
 const { auth } = require('./auth');
 const db = require('./db');
-const { DB, wealthFromSave, scoreFromSave } = db;
+const { DB, wealthFromSave, scoreFromSave, wrInfo } = db;
 const { refRemember, refBind, REF_JOINER, refCode } = require('./refs');
 const { deepLink } = require('./telegram');
 const { ADMIN_IDS, BOT_TOKEN, EARN_MAX_PER_CALL, EARN_MAX_PER_DAY } = require('./config');
@@ -27,13 +27,15 @@ app.post('/api/me', auth, async (req, res) => {
     if (done) refBonus = REF_JOINER;
   }
   const fresh = refBonus ? await DB.getUser(req.user.id) : u;
+  const wr = await wrInfo();
   res.json({
     ok: true,
     user: { id: fresh.id, name: fresh.name, bakht: fresh.bakht | 0 },
     isAdmin: ADMIN_IDS.includes(String(req.user.id).replace(/^dev:/, '')),
     refBonus,
     stars: !!BOT_TOKEN,
-    refLink: deepLink(refCode(req.user.id))
+    refLink: deepLink(refCode(req.user.id)),
+    wr: wr.v, wrMode: wr.m
   });
 });
 
@@ -42,6 +44,14 @@ app.post('/api/save', auth, async (req, res) => {
   const s = b.save, w = b.wallet;
   if (s && JSON.stringify(s).length > 900000)
     return res.status(413).json({ ok: false, err: 'too_big' });
+  /* دیوار ریست جهان: ذخیره‌ای که پیش از آخرین ریست ساخته شده،
+     پذیرفته نمی‌شود — وگرنه بازیکنان آنلاین همه‌چیز را برمی‌گردانند.
+     کلاینت با دیدن این خطا داده‌ی محلی را پاک می‌کند و از نو شروع می‌شود. */
+  if (s) {
+    const wr = await wrInfo();
+    if (wr.v && Number(s.wrv || 0) < wr.v)
+      return res.status(409).json({ ok: false, err: 'world_reset', wr: wr.v, wrMode: wr.m });
+  }
   const patch = {};
   /* فقط چیزهایی که واقعاً فرستاده شده‌اند به‌روز می‌شوند —
      همگام‌سازی کیف پول نباید ذخیرهٔ زندگی را پاک کند */

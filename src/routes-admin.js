@@ -543,6 +543,14 @@ app.post('/api/admin/worldreset', auth, adminSecure, rateLimit(10, 60 * 60 * 100
 
   await audit(null, 'admin-worldreset', wiped.users,
     (hard ? 'hard' : 'soft') + ' backup=' + (bak.ok ? 'ok' : 'skipped'), actor, ip);
+  /* مهر ریست جهان: هر کلاینتی که ذخیرهٔ قدیمی‌تر از این مهر دارد،
+     دیگر نمی‌تواند آن را برگرداند — خودش هم پاک می‌شود. بدون این،
+     بازیکنانِ آنلاین با اولین همگام‌سازی همه‌چیز را برمی‌گرداندند. */
+  try {
+    await DB.setCfg('wr', String(Date.now()));
+    await DB.setCfg('wrmode', hard ? 'hard' : 'soft');
+    db.wrBust();                       /* کش مهر همین لحظه تازه شود */
+  } catch (e) {}
   try {
     await notifyAdmins('🌋 <b>ریست کامل جهان انجام شد</b>\n' +
       'حالت: <b>' + (hard ? 'حذف کامل کاربران' : 'حفظ بخت و خریدها') + '</b>\n' +
@@ -584,19 +592,26 @@ app.post('/api/admin/maintenance', auth, adminSecure, async (req, res) => {
   await audit(null, 'admin-maint', 0, act, actor, ip);
   res.json({ ok: true, msg });
 });
-/* ارسال پیام همگانی — با احتیاط استفاده شود */
+/* ارسال پیام همگانی — با احتیاط استفاده شود.
+   گیرنده: هر کس اعلانش خاموش نیست و مسدود نشده. شرط قدیمیِ chat_ok
+   عملاً پیام را به هیچ‌کس نمی‌رساند، چون بیشتر بازیکن‌ها مینی‌اپ را
+   مستقیم باز می‌کنند و /start هرگز به وب‌هوک نمی‌رسد. اگر کسی واقعاً
+   چت بات را باز نکرده باشد، تلگرام ارسال را رد می‌کند و say او را
+   بی‌سروصدا علامت می‌زند — بی‌خطر است. */
 app.post('/api/admin/broadcast', auth, adminOnly, rateLimit(3, 60 * 60 * 1000), async (req, res) => {
   const text = String((req.body && req.body.text) || '').slice(0, 900);
   if (!text) return res.status(400).json({ ok: false, err: 'empty' });
   let ids = [];
   if (db.pool) {
     const r = await db.pool.query(
-      'SELECT id FROM users WHERE notif=TRUE AND chat_ok=TRUE AND banned=FALSE LIMIT 5000');
+      'SELECT id FROM users WHERE notif=TRUE AND banned=FALSE LIMIT 5000');
     ids = r.rows.map(x => x.id);
   } else {
     ids = Object.values(db.mem.users)
-      .filter(u => u.notif !== false && u.chat_ok && !u.banned).map(u => u.id);
+      .filter(u => u.notif !== false && !u.banned).map(u => u.id);
   }
+  /* شناسه‌های تستی (dev:) قابل ارسال نیستند */
+  ids = ids.filter(id => /^\d+$/.test(String(id)));
   res.json({ ok: true, queued: ids.length });
   (async () => {
     let n = 0;

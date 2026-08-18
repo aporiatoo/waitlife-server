@@ -2,6 +2,7 @@
    ویت‌لایف — لایهٔ داده
    پستگرس (نئون) یا فایل محلی | حساب ثروت و امتیاز سمت سرور | آمار
 ================================================================= */
+const fs   = require('fs');
 const path = require('path');
 const { ROOT } = require('./config');
 
@@ -490,6 +491,23 @@ async function statsSnapshot() {
 }
 
 
+/* ---------------- مهر ریست جهان ----------------
+   بعد از «ریست کامل جهان»، هر کلاینتی که هنوز ذخیرهٔ قدیمی دارد باید
+   شناسایی و وادار به شروع تازه شود. مهر در cfg می‌ماند و اینجا ۳۰ ثانیه
+   کش می‌شود تا هر ذخیره‌سازی یک کوئری اضافه نزند. */
+const WRC = { v: 0, m: 'soft', at: 0 };
+async function wrInfo() {
+  if (WRC.at && Date.now() - WRC.at < 30000) return WRC;
+  try {
+    const c = await DB.getCfg();
+    WRC.v = Number(c.wr || 0);
+    WRC.m = c.wrmode === 'hard' ? 'hard' : 'soft';
+  } catch (e) { /* دیتابیس در دسترس نیست — مهر قبلی معتبر می‌ماند */ }
+  WRC.at = Date.now();
+  return WRC;
+}
+function wrBust() { WRC.at = 0; }
+
 /* pool و mem داخل ماژول دوباره مقدار می‌گیرند (اتصال به دیتابیس،
    بارگذاری فایل) — پس با getter صادر می‌شوند تا ماژول‌های دیگر
    همیشه مقدار زنده را ببینند. */
@@ -498,5 +516,6 @@ module.exports = {
   get mem()  { return mem; },
   DB,
   fileLoad, fileSave, initDB,
-  wealthFromSave, scoreFromSave, statsSnapshot, WEALTH_CAP
+  wealthFromSave, scoreFromSave, statsSnapshot, WEALTH_CAP,
+  wrInfo, wrBust
 };
